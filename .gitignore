@@ -29,6 +29,3 @@ test/out/
 
 # Worktrees (harness-managed, per bass convention)
 .claude/worktrees/
-
-# Editor
-*.code-workspace

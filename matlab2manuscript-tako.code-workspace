@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"name": "projects/humanMouse",
+			"path": "../../projects/humanMouse"
+		}
+	],
+	"settings": {
+		"git.autoRepositoryDetection": "subFolders"
+	}
+}
