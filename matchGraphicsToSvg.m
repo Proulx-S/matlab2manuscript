@@ -10,13 +10,24 @@ function matches = matchGraphicsToSvg(snap, svgFile)
 % same "loud, not silent" discipline the prior engine's matchManuscriptFigureGeometricElement.m
 % established, kept here since it proved the right call.
 %
-% matches(i): svgTag ('polyline'|'path'), points (Nx2, SVG-space), candidateCountBeforeTiebreak.
+% matches(i): svgTag ('polyline'|'path'), points (Nx2, SVG-space), node (the matched Java DOM
+% element itself -- kept live against the SAME doc used to build these matches, so a caller doing
+% further DOM surgery, e.g. groupAndTagSvg.m's tagging pass, can setAttribute() on it directly
+% instead of re-deriving it from points/geometry), candidateCountBeforeTiebreak.
+%
+% Accepts either a file path (opens its own xmlread doc) or an already-open org.w3c.dom.Document --
+% pass the latter when a caller (groupAndTagSvg.m) needs matches(i).node to stay valid against a doc
+% it will go on to mutate and serialize itself.
 
-doc = xmlread(svgFile);
+if ischar(svgFile) || isstring(svgFile)
+    doc = xmlread(svgFile);
+else
+    doc = svgFile;
+end
 polylines = doc.getElementsByTagName('polyline');
 paths = doc.getElementsByTagName('path');
 
-matches = repmat(struct('svgTag','', 'points',[], 'candidateCountBeforeTiebreak',0), numel(snap), 1);
+matches = repmat(struct('svgTag','', 'points',[], 'node',[], 'candidateCountBeforeTiebreak',0), numel(snap), 1);
 
 for i = 1:numel(snap)
     s = snap(i);
@@ -65,6 +76,7 @@ for i = 1:numel(snap)
          'cannot disambiguate with this prototype''s current signal set.'], ...
         i, s.type, s.displayName, numel(cands));
 
+    matches(i).node = cands{1};
     matches(i).points = parseGeometry(cands{1}, matches(i).svgTag);
     assert(size(matches(i).points,1) == s.nPts, 'matchGraphicsToSvg:unmatchedPointCount', ...
         ['object %d (type=%s, displayName=%s): the sole color-matching SVG %s has %d point(s), ' ...
