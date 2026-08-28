@@ -87,6 +87,38 @@ the SVG spec's own `rotate()` → `matrix(cos,sin,-sin,cos,0,0)` expansion).
   flipped back to `'auto'`** the moment a plotting command (`plot()`) runs on axes with no prior
   children — set such properties *after* the first plot call, not before.
 
+## The axis-spine identification pass, and end-to-end grouping/tagging (2026-08-28)
+
+Built (`identifyAxisSpine.m`/`identifyLegend.m`/`groupAndTagSvg.m`), validated against
+`plotVessels.m`'s real single-metric panel (legend on and off). Two ambiguities surfaced during
+that validation and are worth remembering since they're easy to reintroduce by "obvious" geometric
+reasoning alone, not just theoretical edge cases:
+
+- **Tick marks are perpendicular to their own axis, not parallel** — an x-tick is a short VERTICAL
+  segment, a y-tick a short HORIZONTAL one (easy to get backwards; confirmed by first getting it
+  backwards and finding zero tick candidates).
+- **MATLAB's first/last gridline routinely coincides exactly with the spine's own position** (e.g.
+  the leftmost vertical gridline sits at the identical x as the y-spine, same endpoints) — confirmed
+  in this repo's own probe SVG. Excluded by opacity (gridlines are always drawn with a fractional
+  `stroke-opacity`, spine/ticks always opaque), not by geometry, since the geometry is genuinely
+  identical.
+- **The two rulers' own spines touch at the shared box corner** — the y-spine's bottom endpoint IS
+  `(x0,y1)`, so a naive "touches the anchor line" test for the x-ruler also catches the y-spine (and
+  vice versa: the very first x-tick, sitting at `x0`, also touches the y-ruler's anchor line).
+  Excluded by bounding "spine-like" to near-full box span and "tick-like" to well short of it, for
+  BOTH the accept and reject direction — an earlier version of this bound only in one direction and
+  still let a real x-tick get miscounted as an 8th spurious y-tick.
+- **A real, non-hypothetical `DisplayName` content collision**: `plotVessels.m`'s own y-axis label
+  and its legend entry both render the literal string `"radius"`. Resolved by running legend
+  matching (spatially constrained to the legend's own box, independently unambiguous) before axis-
+  label matching, and having axis-label matching skip any `<text>` already tagged.
+
+Tagging itself is deliberately **attribute-based** (`id`/`data-role`/`data-group` stamped onto
+existing leaf elements), not a DOM-restructuring pass — see `groupAndTagSvg.m`'s own header for why
+(the two rulers, and other role members, are frequently NOT document-adjacent, so physically
+regrouping them would mean relocating nodes and risking a paint-order change; attributes are inert
+for rendering and can't).
+
 ## Not yet investigated / open
 
 - The `ScreenPixelsPerInch`-dependent bug documented in the OLD `humanMouse` engine
@@ -95,6 +127,15 @@ the SVG spec's own `rotate()` → `matrix(cos,sin,-sin,cos,0,0)` expansion).
   here (sub-millimeter, universal, not environment-dependent) — its real root cause is still
   unknown and likely lives elsewhere in that engine's `copyForManuscriptPanel.m`/`savefig`/
   `openfig` round-trip, which this tool does not yet use or reproduce.
-- Legend-internal grouping/tagging (individual legend entries) not yet designed.
-- The axis-spine identification pass itself (finding which SVG element(s) correspond to the spine,
-  vs. tick marks/gridlines) is designed conceptually but not yet built as real code in this repo.
+- `ax.Box='on'` (mirrored top/right spine lines) is not handled by `identifyAxisSpine.m` yet --
+  errors loudly rather than silently mishandling it.
+- Line+error-band pairing into one "series" uses `DisplayName` equality only -- no project
+  convention exists yet for a more explicit link (e.g. a shared `Tag` suffix); revisit if/when one
+  is established in `humanMouse`.
+- The ad hoc vessel-ID corner label `plotVessels.m` draws via `drawIdCornerBox` is not tagged by
+  `groupAndTagSvg.m` -- same known, deliberately tracked gap `dumpFontRegistry.m` already has for
+  its font-size (neither an axis label, tick label, data series, nor legend entry as defined here).
+- Pillar 2 (the mm-based resize round-trip itself: harvest a human's edited spine geometry from the
+  tagged SVG, feed it back into MATLAB via `ax.InnerPosition`, regenerate, re-place) is not yet
+  built -- the mechanism it depends on (`PositionConstraint='innerposition'`) is confirmed working,
+  but no code exists yet to actually do the harvest/feedback/regenerate loop.

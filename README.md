@@ -48,7 +48,35 @@ that start life as one tile inside a larger `tiledlayout` (`plotGaussianFitPanel
   live Line/Patch's color/style "recipe" before export, then matches it to its SVG counterpart by
   exact color (a byte-exact round-trip, confirmed empirically), with a point-count check as a
   loud (never silent) tie-breaker/failure signal. Validated on `humanMouse`'s real single-metric
-  `plotVessels` panel.
+  `plotVessels` panel. Also exposes the matched Java DOM node itself (not just its points), for
+  `groupAndTagSvg.m` below to tag directly.
+- `identifyAxisSpine.m` — locates the spine's own SVG elements (the long axis-line polyline for
+  each ruler) and its tick marks, GEOMETRICALLY, from `ax.InnerPosition`/figure size -- never by
+  color/z-order, since spine/gridlines/axes-background routinely share the same palette. Guards
+  against two confirmed real ambiguities: MATLAB's first/last gridline often coincides exactly with
+  the spine's own position (excluded by opacity: gridlines are always fractional, spine/ticks always
+  opaque) and the two rulers' own spines touch at the shared box corner (excluded by bounding
+  "spine-like" to near-full-span and "tick-like" to well-short). `ax.Box='off'` only for now (the
+  confirmed real case); `Box='on'` errors loudly rather than silently mishandling it.
+- `identifyLegend.m` — locates the legend's own box (background+border rects, found by eliminating
+  the figure/axes background rects) and, per data series, its swatch + entry text -- using the
+  confirmed fact that `DisplayName` text survives export only as a literal legend `<text>` glyph,
+  restricted spatially to the legend's own box. Returns `[]` if no live Legend exists (not an
+  error).
+- `groupAndTagSvg.m` — the grouping/tagging pipeline step itself: orchestrates the three primitives
+  above and stamps `id`/`data-role`/`data-group` attributes onto the matched leaf elements for the
+  three major roles (axis-spine incl. ticks/tick-labels/axis-labels as subgroups; dataseries,
+  linking a Line to a same-`DisplayName` Patch as one "series" when both exist; legend, incl. box
+  and per-entry swatch/label). Deliberately ATTRIBUTE-based rather than DOM-restructuring: `id`/
+  `data-*` are inert for rendering, so tagging can never change paint order or visual output --
+  unlike physically regrouping elements that sit far apart in the document (confirmed: a ruler's
+  spine+ticks group and the other ruler's are NOT document-adjacent, with title/tick-label text
+  interleaved between them), which would require relocating nodes and risk exactly that. A logical
+  group is represented as a shared `data-group="..."` attribute value across however many
+  physically-scattered elements belong to it, not literal DOM nesting. Validated end-to-end on
+  `humanMouse`'s real `plotVessels` panel, legend on and off, including a real content collision
+  (the panel's own y-axis label and its legend entry are both literally the string `"radius"`) --
+  correctly resolved to two distinct tagged elements.
 - `test/` — MATLAB scripts validating the above (see file headers for what each proves). Several
   deliberately exercise a real plotting function from `humanMouse` (`plotVessels.m`) rather than
   synthetic data — adjust each test's `workDir` if that project lives elsewhere on this machine.
@@ -58,10 +86,20 @@ that start life as one tile inside a larger `tiledlayout` (`plotGaussianFitPanel
   several of these took many rounds of testing (including two self-corrected mistakes) to nail
   down and are easy to re-break by assumption.
 
-## Status (2026-08-26)
+## Status (2026-08-28)
 
-Early prototype stage. The matching primitive and the baking/registry mechanism are both validated
-against real data; the axis-spine grouping/tagging pass and the mm-based resize round-trip
-(MATLAB `PositionConstraint='innerposition'` + `InnerPosition`, confirmed to work exactly once
-transforms are baked) are designed and spot-verified but not yet assembled into an end-to-end
-per-panel pipeline.
+Pillar 1 (grouping/tagging) has a working end-to-end pipeline (`groupAndTagSvg.m`), validated
+against `humanMouse`'s real `plotVessels` panel: bake → match data series (+ legend swatch/label) →
+identify axis spine/ticks → identify legend box → tag everything with `id`/`data-role`/
+`data-group`. Known, deliberately out-of-scope gaps (tracked, not silently accepted): gridlines/
+figure-background/axes-background are left untouched (not one of the three major roles); the ad hoc
+vessel-ID corner label `plotVessels.m` draws is not tagged (same known gap `dumpFontRegistry.m`
+already tracks for its font-size); `ax.Box='on'` is not handled; a Line/Patch error-band pairing
+uses `DisplayName` equality only (no project convention exists yet for a more explicit link);
+multi-legend/multi-axes figures are out of scope (single-axes-per-figure panel only, per this
+repo's own scope discipline above).
+
+Pillar 2 (the mm-based resize round-trip: harvest a human's SVG edit to the spine → feed back into
+MATLAB → regenerate everything else around it → re-place) is designed and spot-verified (MATLAB
+`PositionConstraint='innerposition'` + `InnerPosition`, confirmed to work exactly once transforms
+are baked) but not yet built.
