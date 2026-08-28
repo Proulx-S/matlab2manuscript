@@ -33,8 +33,9 @@ taggedFile = fullfile(outDir,'group_tag_tagged.svg');
 stats = groupAndTagSvg(ax, snap, bakedFile, taggedFile);
 close(fig);   % safe to close now -- groupAndTagSvg only needed the live ax/fig up to this point
 
-fprintf('stats: nDataSeries=%d nLegendEntries=%d nXTicks=%d nYTicks=%d nAxisLabels=%d\n', ...
-    stats.nDataSeries, stats.nLegendEntries, stats.nXTicks, stats.nYTicks, stats.nAxisLabels);
+fprintf('stats: nDataSeries=%d nLegendEntries=%d nXTicks=%d nYTicks=%d nAxisLabels=%d nFurnitureGridlines=%d nAnnotations=%d\n', ...
+    stats.nDataSeries, stats.nLegendEntries, stats.nXTicks, stats.nYTicks, stats.nAxisLabels, ...
+    stats.nFurnitureGridlines, stats.nAnnotations);
 
 assert(stats.nDataSeries == 1, 'expected exactly 1 tagged data series');
 assert(stats.nLegendEntries == 1, 'expected exactly 1 tagged legend entry');
@@ -44,9 +45,12 @@ assert(stats.nYTicks == 7, 'expected 7 y-ticks');
 % separate whole-figure title/annotation, not ax.Title -- not this tool's concern yet) -- only
 % xlabel+ylabel are real ax-level labels here.
 assert(stats.nAxisLabels == 2, 'expected xlabel+ylabel tagged (2, ax.Title.String is empty for this panel)');
+assert(stats.nFurnitureGridlines == 18, 'expected 18 gridlines (11 vertical + 7 horizontal)');
+assert(stats.nAnnotations == 2, 'expected 2 leftover annotations (whole-figure title-ish text + vessel-ID corner label)');
 
-% --- element-count invariant: tagging must be PURELY additive (attributes only) -- same number of
-% rendering-bearing elements before and after, nothing added/removed/duplicated.
+% --- element-count invariant: grouping/tagging must never add/remove/duplicate a rendering-bearing
+% element -- only <g> wrapper counts should change (new semantic groups added, now-empty original
+% style-batching wrappers pruned).
 docBaked = xmlread(bakedFile);
 docTagged = xmlread(taggedFile);
 for tag = {'polyline','path','text','circle'}
@@ -56,31 +60,137 @@ for tag = {'polyline','path','text','circle'}
     fprintf('<%s> count preserved: %d\n', tag{1}, nBaked);
 end
 
-% --- spot-check specific expected ids/attributes actually landed on the right elements ---
-txt = fileread(taggedFile);
-expectedIds = {'axis-spine-x','axis-spine-y','axis-xlabel','axis-ylabel', ...
-    'axis-tick-x-1','axis-tick-x-11','axis-ticklabel-x-1','axis-ticklabel-x-11', ...
-    'axis-tick-y-1','axis-tick-y-7','axis-ticklabel-y-1','axis-ticklabel-y-7', ...
-    'legend-box-bg','legend-box-border','legend-swatch-1','legend-label-1'};
-for i = 1:numel(expectedIds)
-    found = ~isempty(regexp(txt, ['id="' regexptranslate('escape',expectedIds{i}) '"'], 'once'));
-    assert(found, 'expected id="%s" not found in tagged SVG', expectedIds{i});
+% --- top-level structure: exactly the expected semantic groups, in the expected (paint-order-safe)
+% sequence -- nothing left as a stray element directly under MATLAB's own outer wrapper <g>.
+rootG = getTestRootGroup(docTagged);
+topKids = rootG.getChildNodes();
+topGroupIds = {};
+for i = 0:topKids.getLength()-1
+    c = topKids.item(i);
+    if c.getNodeType() ~= c.ELEMENT_NODE; continue; end
+    assert(strcmp(char(c.getTagName()),'g'), 'stray non-<g> element left at top level: <%s>', char(c.getTagName()));
+    topGroupIds{end+1} = char(c.getAttribute('id')); %#ok<AGROW>
 end
-fprintf('all %d expected ids found\n', numel(expectedIds));
+fprintf('top-level groups (paint order): %s\n', strjoin(topGroupIds, ', '));
+% Annotations are tagged IN PLACE, never grouped (see groupAndTagSvg.m's own comment on why) -- each
+% one's ORIGINAL, untouched, un-ided MATLAB wrapper <g> is still a top-level sibling, so exactly
+% nAnnotations of these top-level ids are expected to be empty; every NAMED one must be one of the
+% four real semantic groups, nothing else.
+namedTopGroupIds = topGroupIds(~cellfun(@isempty, topGroupIds));
+nUnnamed = sum(cellfun(@isempty, topGroupIds));
+assert(isequal(namedTopGroupIds, {'furniture','axis-spine','dataseries','legend'}), ...
+    'unexpected named top-level group set/order: %s', strjoin(namedTopGroupIds,', '));
+assert(nUnnamed == stats.nAnnotations, ...
+    'expected %d unnamed leftover wrapper <g>s (one per in-place-tagged annotation), found %d', ...
+    stats.nAnnotations, nUnnamed);
 
-% dataseries id should embed the DisplayName slug ("radius")
-found = ~isempty(regexp(txt, 'id="dataseries-1-radius"', 'once'));
-assert(found, 'expected id="dataseries-1-radius" not found');
+% --- real nesting: the whole point of this rewrite -- verify actual DOM parent/child relationships,
+% not just that every id string happens to appear somewhere in the file.
+spineX = findTestById(docTagged,'axis-spine-x');
+assert(hasTestParentId(spineX,'axis-spine-lines'), 'axis-spine-x not directly under axis-spine-lines');
+assert(hasTestAncestorId(spineX,'axis-spine'), 'axis-spine-x not nested under axis-spine');
+
+tick1Mark = findTestById(docTagged,'axis-tick-x-1-mark');
+tick1Label = findTestById(docTagged,'axis-ticklabel-x-1');
+assert(hasTestParentId(tick1Mark,'axis-tick-x-1') && hasTestParentId(tick1Label,'axis-tick-x-1'), ...
+    'x-tick 1''s mark and label are not grouped together under their own per-tick group');
+assert(hasTestAncestorId(tick1Mark,'axis-ticks-x') && hasTestAncestorId(tick1Mark,'axis-spine'), ...
+    'x-tick 1 not nested under axis-ticks-x/axis-spine');
+
+tick7yMark = findTestById(docTagged,'axis-tick-y-7-mark');
+tick7yLabel = findTestById(docTagged,'axis-ticklabel-y-7');
+assert(hasTestParentId(tick7yMark,'axis-tick-y-7') && hasTestParentId(tick7yLabel,'axis-tick-y-7'), ...
+    'y-tick 7''s mark and label are not grouped together');
+
+xlabelNode = findTestById(docTagged,'axis-xlabel');
+assert(hasTestParentId(xlabelNode,'axis-labels') && hasTestAncestorId(xlabelNode,'axis-spine'), ...
+    'axis-xlabel not nested under axis-labels/axis-spine');
+
+dataNode = findTestById(docTagged,'dataseries-1-radius');
+assert(hasTestAncestorId(dataNode,'dataseries'), 'data series line not nested under top-level dataseries group');
+
+swatchNode = findTestById(docTagged,'legend-swatch-1');
+labelNode = findTestById(docTagged,'legend-label-1');
+assert(hasTestParentId(swatchNode,'legend-entry-1') && hasTestParentId(labelNode,'legend-entry-1'), ...
+    'legend swatch/label not grouped together under one legend-entry');
+assert(hasTestAncestorId(swatchNode,'legend'), 'legend entry not nested under top-level legend group');
+
+boxBg = findTestById(docTagged,'legend-box-bg');
+assert(hasTestParentId(boxBg,'legend-box'), 'legend-box-bg not nested under legend-box subgroup');
+
+gridline1 = findTestById(docTagged,'gridline-1');
+assert(hasTestParentId(gridline1,'gridlines') && hasTestAncestorId(gridline1,'furniture'), ...
+    'gridline-1 not nested under gridlines/furniture');
+
+fprintf('all nesting relationships verified\n');
 
 % the legend-label text and the ylabel text must be DIFFERENT nodes despite identical content
-% ("radius" in both, confirmed in this repo's own probe.svg) -- if collapsed into the same match,
-% one of axis-ylabel/legend-label-1 would be missing (already checked above) or attached to the
-% WRONG element; cross-check by content+id co-occurring on distinct lines.
-lines = strsplit(txt, newline);
-ylabelLine = lines(~cellfun(@isempty, regexp(lines, 'id="axis-ylabel"', 'once')));
-legendLabelLine = lines(~cellfun(@isempty, regexp(lines, 'id="legend-label-1"', 'once')));
-assert(~isempty(ylabelLine) && ~isempty(legendLabelLine), 'could not locate the two "radius" text lines');
-assert(~strcmp(ylabelLine{1}, legendLabelLine{1}), 'ylabel and legend-label collapsed onto the same line -- collision not resolved');
+% ("radius" in both, confirmed in this repo's own probe.svg) -- the collision is resolved correctly
+% iff they're two distinct elements landing in two different groups (already implied by the nesting
+% checks above, spelled out explicitly here too).
+ylabelNode = findTestById(docTagged,'axis-ylabel');
+assert(~ylabelNode.isSameNode(labelNode), 'ylabel and legend-label collapsed onto the same element -- collision not resolved');
 fprintf('ylabel/legend-label "radius" collision correctly resolved to distinct elements\n');
 
+% --- visual-regression check: grouping/tagging is DOM surgery (relocating real elements), unlike
+% this file's first (attribute-only, never-move-anything) version -- rasterize both the un-grouped
+% baked file and the newly-grouped tagged file and pixel-diff them. Requires rsvg-convert + compare
+% (ImageMagick); skips (not fails) if either isn't on PATH, printing a warning rather than silently
+% passing.
+[hasRsvg,~] = system('which rsvg-convert');
+[hasCompare,~] = system('which compare');
+if hasRsvg == 0 && hasCompare == 0
+    bakedPng = fullfile(outDir,'group_tag_baked.png');
+    taggedPng = fullfile(outDir,'group_tag_tagged.png');
+    diffPng = fullfile(outDir,'group_tag_diff.png');
+    [s1,o1] = system(sprintf('rsvg-convert -o %s %s', bakedPng, bakedFile));
+    [s2,o2] = system(sprintf('rsvg-convert -o %s %s', taggedPng, taggedFile));
+    assert(s1==0 && s2==0, 'rsvg-convert failed: %s / %s', o1, o2);
+    % `compare -metric AE -fuzz 1%` prints the count of pixels differing by MORE than 1% to stderr
+    % (captured via 2>&1) -- exits nonzero whenever ANY pixel differs at all, so the exit code alone
+    % can't distinguish "found real differences" from "tool itself failed"; parse the printed count.
+    [~,cmpOut] = system(sprintf('compare -metric AE -fuzz 1%% %s %s %s 2>&1', bakedPng, taggedPng, diffPng));
+    diffCount = str2double(strtrim(cmpOut));
+    if isnan(diffCount); diffCount = Inf; end   % unparsable output -- treat as failure, don't silently pass
+    fprintf('pixel-diff (baked vs. grouped/tagged rendering, 1%% fuzz): %g differing pixels\n', diffCount);
+    assert(diffCount == 0, ['rendering changed after grouping/tagging: %g pixels differ by more than 1%% -- ' ...
+        'DOM restructuring must be visually inert.'], diffCount);
+else
+    warning('test_group_tag:noRasterTools', 'rsvg-convert/compare not found on PATH -- skipping the visual-regression pixel-diff check.');
+end
+
 disp('GROUP/TAG VALIDATION: PASS');
+
+function g = getTestRootGroup(doc)
+docRoot = doc.getDocumentElement();
+kids = docRoot.getChildNodes();
+g = [];
+for i = 0:kids.getLength()-1
+    c = kids.item(i);
+    if c.getNodeType() == c.ELEMENT_NODE && strcmp(char(c.getTagName()),'g'); g = c; end
+end
+end
+
+function node = findTestById(doc, id)
+all = doc.getElementsByTagName('*');
+node = [];
+for k = 0:all.getLength()-1
+    n = all.item(k);
+    if strcmp(char(n.getAttribute('id')), id); node = n; return; end
+end
+assert(~isempty(node), 'findTestById: no element with id="%s" found', id);
+end
+
+function tf = hasTestParentId(node, parentId)
+p = node.getParentNode();
+tf = ~isempty(p) && p.getNodeType() == p.ELEMENT_NODE && strcmp(char(p.getAttribute('id')), parentId);
+end
+
+function tf = hasTestAncestorId(node, ancestorId)
+n = node.getParentNode();
+tf = false;
+while ~isempty(n) && n.getNodeType() == n.ELEMENT_NODE
+    if strcmp(char(n.getAttribute('id')), ancestorId); tf = true; return; end
+    n = n.getParentNode();
+end
+end

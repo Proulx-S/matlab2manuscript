@@ -111,13 +111,56 @@ reasoning alone, not just theoretical edge cases:
 - **A real, non-hypothetical `DisplayName` content collision**: `plotVessels.m`'s own y-axis label
   and its legend entry both render the literal string `"radius"`. Resolved by running legend
   matching (spatially constrained to the legend's own box, independently unambiguous) before axis-
-  label matching, and having axis-label matching skip any `<text>` already tagged.
+  label matching, and having axis-label matching exclude whatever legend matching already claimed.
 
-Tagging itself is deliberately **attribute-based** (`id`/`data-role`/`data-group` stamped onto
-existing leaf elements), not a DOM-restructuring pass — see `groupAndTagSvg.m`'s own header for why
-(the two rulers, and other role members, are frequently NOT document-adjacent, so physically
-regrouping them would mean relocating nodes and risking a paint-order change; attributes are inert
-for rendering and can't).
+## Grouping/tagging: from attribute-only to real nested groups (revised 2026-08-28)
+
+`groupAndTagSvg.m`'s FIRST version only stamped `id`/`data-role`/`data-group` attributes onto
+existing leaf elements without moving anything, reasoning that relocating nodes risked changing
+paint order (the x-ruler and y-ruler groups, for instance, are NOT document-adjacent, with title/
+tick-label text interleaved between them). **Seb's own feedback, same day**: that flat,
+attribute-only structure is useless in an actual SVG editor — click-to-select/collapse there follows
+DOM nesting, not attribute values, so a "group" that's really just N independent single-element
+groups sharing an attribute took exactly as many clicks to work with as no grouping at all. Real
+nested `<g>` containers are what's actually needed.
+
+Rebuilt to physically restructure the DOM, made safe by two mechanisms:
+
+1. **Inline every relocated leaf's inherited presentation attributes onto itself before moving it.**
+   MATLAB's own exporter puts `fill`/`stroke`/`font-*`/etc. on the enclosing style-batching `<g>`,
+   not the leaf (`<text>` elements are the one exception — confirmed to already self-declare these
+   directly). Copying the resolved value from whichever ancestor currently has it, directly onto the
+   leaf, before removing it from that ancestor, means the leaf's rendering never depends on which
+   new (unstyled, id/data-role-only) semantic group it ends up nested under.
+2. **Anchor each new top-level group at whichever of its members occurs EARLIEST in the original,
+   unmodified document**, and always move members INTO that already-positioned group rather than
+   assembling the group elsewhere and inserting it later. This preserves the group's paint-order
+   position relative to every untouched element and every other group exactly, since the group's own
+   position is fixed before anything is pulled into it.
+
+**A third, real ambiguity surfaced applying this to the catch-all "leftover" bucket** (whatever
+isn't axis-spine/dataseries/legend/furniture — e.g. `plotVessels.m`'s own ad hoc vessel-ID corner
+label, or an unrelated whole-figure title-ish text neither this tool nor `ax.Title` claims):
+axis-spine/dataseries/legend/furniture members are each always drawn as ONE CONTIGUOUS cluster in
+MATLAB's own output (confirmed empirically for every real case here), so anchoring their shared
+group at the earliest member's position never reorders anything relative to a THIRD, unrelated
+element sitting between two of that group's own members. Leftover/annotation elements have no such
+guarantee — they are by definition mutually unrelated. Confirmed for real on this repo's own
+validation panel: an early version of this rewrite combined two leftover elements (a whole-figure
+title-ish text drawn near the very start of the document, and the vessel-ID corner label drawn much
+later, after the data series) into one shared "annotations" group anchored at the EARLIER one's
+position — which dragged the LATER one (the corner label) backward, past the axis-spine and data
+series, in paint order. In this specific case it turned out to be visually harmless (confirmed via
+the pixel-diff check below, since the corner label's position didn't overlap anything it now painted
+under), but that's a coincidence of this one panel's layout, not a guarantee. Fixed by NOT grouping
+leftovers together at all: each gets `id`/`data-role="annotation"` tagged **in place**, never
+relocated, so there is no group-level anchor decision to get wrong.
+
+**Verification**: rather than trust the above reasoning alone, both the pre-grouping (baked-only)
+and post-grouping (tagged) SVGs are rasterized (`rsvg-convert`) and pixel-diffed (ImageMagick
+`compare -metric AE -fuzz 1%`) — 0 differing pixels, both with a legend present and without, on
+this repo's real validation panel. `test/test_group_tag.m` runs this automatically when both tools
+are on `PATH` (warns and skips, rather than silently passing, if they aren't).
 
 ## Not yet investigated / open
 

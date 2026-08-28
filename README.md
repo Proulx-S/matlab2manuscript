@@ -63,20 +63,39 @@ that start life as one tile inside a larger `tiledlayout` (`plotGaussianFitPanel
   confirmed fact that `DisplayName` text survives export only as a literal legend `<text>` glyph,
   restricted spatially to the legend's own box. Returns `[]` if no live Legend exists (not an
   error).
-- `groupAndTagSvg.m` — the grouping/tagging pipeline step itself: orchestrates the three primitives
-  above and stamps `id`/`data-role`/`data-group` attributes onto the matched leaf elements for the
-  three major roles (axis-spine incl. ticks/tick-labels/axis-labels as subgroups; dataseries,
-  linking a Line to a same-`DisplayName` Patch as one "series" when both exist; legend, incl. box
-  and per-entry swatch/label). Deliberately ATTRIBUTE-based rather than DOM-restructuring: `id`/
-  `data-*` are inert for rendering, so tagging can never change paint order or visual output --
-  unlike physically regrouping elements that sit far apart in the document (confirmed: a ruler's
-  spine+ticks group and the other ruler's are NOT document-adjacent, with title/tick-label text
-  interleaved between them), which would require relocating nodes and risk exactly that. A logical
-  group is represented as a shared `data-group="..."` attribute value across however many
-  physically-scattered elements belong to it, not literal DOM nesting. Validated end-to-end on
-  `humanMouse`'s real `plotVessels` panel, legend on and off, including a real content collision
-  (the panel's own y-axis label and its legend entry are both literally the string `"radius"`) --
-  correctly resolved to two distinct tagged elements.
+- `groupAndTagSvg.m` — the grouping/tagging pipeline step itself: orchestrates the primitives above
+  and restructures the DOM into real nested `<g id="..." data-role="...">` containers for four
+  roles — **furniture** (figure/axes background, gridlines), **axis-spine** (spine lines, one
+  sub-`<g>` per tick pairing its mark+label together, axis labels), **dataseries** (+ associated
+  error, linking a Line to a same-`DisplayName` Patch as one series), **legend** (box, one
+  sub-`<g>` per entry pairing its swatch+label together). Anything left unclaimed (e.g.
+  `plotVessels.m`'s own ad hoc vessel-ID corner label) gets `id`/`data-role="annotation"` tagged IN
+  PLACE, deliberately not grouped with anything else.
+
+  **Revised 2026-08-28** from this file's first version, which only stamped attributes onto existing
+  leaf elements without moving anything (reasoning that relocating nodes risked changing paint
+  order) — Seb's own feedback: that flat, attribute-only structure was useless in an actual SVG
+  editor, since click-to-select/collapse there follows DOM nesting, not attribute values, so it took
+  exactly as many clicks as no grouping at all. This version physically moves elements into real
+  nested groups, made safe by (1) inlining every relocated leaf's inherited presentation attributes
+  (fill/stroke/font-\*/etc., MATLAB puts these on the enclosing `<g>`, not the leaf) directly onto
+  itself before moving it, so it never depends on whichever new, unstyled semantic group it ends up
+  under, and (2) anchoring each new top-level group at whichever of its members occurs EARLIEST in
+  the original document, preserving paint order relative to every other group/untouched element.
+  Annotations are the one deliberate exception: unlike axis-spine/dataseries/legend, whose members
+  are always drawn as one contiguous cluster in MATLAB's own output, annotations are arbitrary,
+  mutually unrelated leftovers with no such guarantee — confirmed for real on this repo's own
+  validation panel, where an earlier version of this file that DID combine two leftover elements
+  into one shared group dragged one of them backward past the axis-spine/data in paint order, a real
+  (if here still visually harmless) regression risk. Tagging them in place avoids the risk entirely.
+
+  Verified NOT to change rendering by rasterizing (`rsvg-convert`) both the pre-grouping baked file
+  and the post-grouping tagged file and pixel-diffing them (ImageMagick `compare`, 1% fuzz) — 0
+  differing pixels on this repo's own validated panel; `test/test_group_tag.m` runs this check
+  automatically when both tools are on `PATH`. Validated end-to-end on `humanMouse`'s real
+  `plotVessels` panel, legend on and off, including a real content collision (the panel's own
+  y-axis label and its legend entry are both literally the string `"radius"`) — correctly resolved
+  to two distinct, correctly-nested elements.
 - `test/` — MATLAB scripts validating the above (see file headers for what each proves). Several
   deliberately exercise a real plotting function from `humanMouse` (`plotVessels.m`) rather than
   synthetic data — adjust each test's `workDir` if that project lives elsewhere on this machine.
@@ -90,14 +109,14 @@ that start life as one tile inside a larger `tiledlayout` (`plotGaussianFitPanel
 
 Pillar 1 (grouping/tagging) has a working end-to-end pipeline (`groupAndTagSvg.m`), validated
 against `humanMouse`'s real `plotVessels` panel: bake → match data series (+ legend swatch/label) →
-identify axis spine/ticks → identify legend box → tag everything with `id`/`data-role`/
-`data-group`. Known, deliberately out-of-scope gaps (tracked, not silently accepted): gridlines/
-figure-background/axes-background are left untouched (not one of the three major roles); the ad hoc
-vessel-ID corner label `plotVessels.m` draws is not tagged (same known gap `dumpFontRegistry.m`
-already tracks for its font-size); `ax.Box='on'` is not handled; a Line/Patch error-band pairing
-uses `DisplayName` equality only (no project convention exists yet for a more explicit link);
-multi-legend/multi-axes figures are out of scope (single-axes-per-figure panel only, per this
-repo's own scope discipline above).
+identify axis spine/ticks → identify legend box → identify furniture (background/gridlines) →
+restructure into real nested `<g id=... data-role=...>` groups, verified pixel-identical to the
+un-grouped baked file. Known, deliberately out-of-scope gaps (tracked, not silently accepted): the
+ad hoc vessel-ID corner label `plotVessels.m` draws is tagged but not grouped (same known gap
+`dumpFontRegistry.m` already tracks for its font-size); `ax.Box='on'` is not handled; a Line/Patch
+error-band pairing uses `DisplayName` equality only (no project convention exists yet for a more
+explicit link); multi-legend/multi-axes figures are out of scope (single-axes-per-figure panel
+only, per this repo's own scope discipline above).
 
 Pillar 2 (the mm-based resize round-trip: harvest a human's SVG edit to the spine → feed back into
 MATLAB → regenerate everything else around it → re-place) is designed and spot-verified (MATLAB
