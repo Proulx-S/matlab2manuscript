@@ -63,7 +63,7 @@ for k = 0:polylines.getLength()-1
     node = polylines.item(k);
     pts = parsePolylinePoints(node);
     if size(pts,1) ~= 2; continue; end   % rulers only ever emit 2-point segments after baking
-    if getOpacity(node) < 0.99; continue; end   % excludes gridlines (see (1) above)
+    if getElementOpacity(node) < 0.99; continue; end   % excludes gridlines (see (1) above)
     dx = abs(pts(2,1)-pts(1,1)); dy = abs(pts(2,2)-pts(1,2));
     touchesY1 = abs(pts(1,2)-y1) < tol || abs(pts(2,2)-y1) < tol;
     touchesX0 = abs(pts(1,1)-x0) < tol || abs(pts(2,1)-x0) < tol;
@@ -119,17 +119,3 @@ vals = sscanf(str, '%f,%f');
 pts = reshape(vals, 2, [])';
 end
 
-function op = getOpacity(node)
-% Resolves 'stroke-opacity' by walking up ancestors (MATLAB's -dsvg exporter puts style attributes
-% on the enclosing <g>, not the leaf polyline -- same convention matchGraphicsToSvg.m's own
-% attrOrParent relies on). Defaults to 1 (opaque) if never set, the correct SVG default.
-op = 1;
-n = node;
-while ~isempty(n) && n.getNodeType() == n.ELEMENT_NODE
-    if n.hasAttribute('stroke-opacity')
-        op = str2double(char(n.getAttribute('stroke-opacity')));
-        return
-    end
-    n = n.getParentNode();
-end
-end
