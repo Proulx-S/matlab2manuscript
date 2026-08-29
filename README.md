@@ -33,6 +33,17 @@ this pipeline is its own, later, independent step, out of scope until then.
 
 ## Layout
 
+- **`runPillar1.m`** (2026-08-29) — the single-function entry point for the whole pillar-1 pipeline:
+  `stats = runPillar1(ax, outDir, baseName)` runs snapshot → raw export → bake → identity export →
+  identity bake → group/tag, producing just `<baseName>_tagged.svg`. The four intermediate files
+  this needs along the way are deleted once no longer needed by default —
+  `opts.keepIntermediates=true` keeps them (using the exact naming convention
+  `examples/makeExamplePanelA.m` already established by hand: `<baseName>_raw.svg`, `<baseName>.svg`
+  baked, `<baseName>_identity_raw.svg`/`<baseName>_identity.svg`). Call with no arguments for a
+  self-populating default-opts struct + help text. Validated (`test/test_run_pillar1.m`) to produce
+  BYTE-IDENTICAL output to calling every step below by hand — this is the primary way to run pillar 1
+  now; the individual functions below remain directly callable for finer-grained control or when
+  composing pillar 1 into something larger (e.g. pillar 2, eventually).
 - `bakeTransforms.py` — flattens every `transform="matrix(...)"` MATLAB's exporter emits directly
   into each element's own geometry/size attributes (compulsory first step after export — see
   `docs/findings.md` for why). Preserves `<text>` as real text; a genuinely rotated `<text>`
