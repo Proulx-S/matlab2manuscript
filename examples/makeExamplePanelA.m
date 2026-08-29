@@ -9,7 +9,9 @@
 % docs/findings.md): plotVessels.m always hosts its axes inside a TiledChartLayout (even for one
 % panel), and this repo has decided not to accommodate that for now -- adapting an arbitrary MATLAB
 % figure down to a plain single-axes figure suitable for this pipeline is its own, later,
-% independent step. Same synthetic panel used by test/test_group_tag.m.
+% independent step. Includes a confidence band (exercising the dataseries 'value'/'conf' sub-group
+% split) and an ad hoc annotation (folded into furniture -- see groupAndTagSvg.m's own comment).
+% Same synthetic panel used by test/test_group_tag.m.
 %
 % figure1.svg (a composed multi-panel figure with this panel inserted as a layer) is NOT produced --
 % that's pillar 2 (the mm-based resize round-trip / panel-insertion step), not yet built. See
@@ -36,12 +38,19 @@ hold(ax, 'on');
 
 x = 0:0.5:20;
 y = 5 + 0.3*sin(2*pi*x/5);
-plot(ax, x, y, 'Color',[0.9 0.7 0.1], 'LineWidth', 2, 'DisplayName', 'signal');
+% confidence band (Patch) FIRST, same DisplayName as the line below so groupAndTagSvg.m's own
+% DisplayName-based pairing puts them in the same series' 'value'/'conf' sub-groups. Keep it
+% default-visible (NOT HandleVisibility='off' -- that would also hide it from
+% snapshotAxesStyle.m's own findobj(ax,'Type','patch') call, not just from legend()) and instead
+% pass legend() an explicit handle list to keep it out of the legend without hiding it from findobj.
+patchH = patch(ax, [x fliplr(x)], [y+0.15 fliplr(y-0.15)], [0.9 0.7 0.1], ...
+    'FaceAlpha', 0.2, 'EdgeColor', 'none', 'DisplayName', 'signal'); %#ok<NASGU>
+lineH = plot(ax, x, y, 'Color',[0.9 0.7 0.1], 'LineWidth', 2, 'DisplayName', 'signal');
 ax.XLabel.String = 'time (s)';
 ax.YLabel.String = 'signal';   % deliberately the SAME string as the legend's own DisplayName below,
                                 % to keep exercising the real content-collision case this pipeline
                                 % must resolve (confirmed real on plotVessels.m's own "radius" panel)
-legend(ax, 'Location','northeast');   % picks up the Line's own DisplayName='signal' set above
+legend(ax, lineH, 'Location','northeast');   % explicit handle -- only the line gets a legend entry
 text(ax, 0.02, 0.95, 'panel A', 'Units','normalized', 'FontWeight','bold');   % ad hoc annotation
 drawnow;
 

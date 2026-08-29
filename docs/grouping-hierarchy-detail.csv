@@ -1,9 +1,11 @@
 id,parent,role,contents,cardinality,notes
-furniture,,furniture,(container only),1,figure/axes background + gridlines; not one of the three roles the plan defines but grouped for a tidy document
+furniture,,furniture,(container only),1,figure/axes background + gridlines + folded-in annotations
 figure-background,furniture,figure-background,figure background rect,1,
 axes-background,furniture,axes-background,axes plot-box background rect,1,
 gridlines,furniture,gridlines,(container only),1,
 gridline-{n},gridlines,gridline,one gridline polyline,1 per major tick (x+y combined),"n is 1-indexed in document order, not paired to a specific tick"
+annotations,furniture,annotations,(container only),0 or 1,only created if at least one leftover/unclaimed element exists
+annotation-{k},annotations,annotation,any leftover/unclaimed element,1 per leftover element,"id is annotation-{k} only if the element had no id already; folded into furniture on Seb's own ask 2026-08-29 -- this DOES physically relocate it (see groupAndTagSvg.m's own comment on the paint-order tradeoff this involves, and docs/findings.md)"
 axis-spine,,axis-spine,(container only),1,
 axis-spine-lines,axis-spine,spine-lines,(container only),1,
 axis-spine-x,axis-spine-lines,spine-line,bottom spine polyline,1,the long polyline spanning ax.InnerPosition's width
@@ -22,8 +24,10 @@ axis-xlabel,axis-labels,axis-label,xlabel text,0 or 1,only if ax.XLabel.String i
 axis-ylabel,axis-labels,axis-label,ylabel text,0 or 1,only if ax.YLabel.String is non-empty
 dataseries,,dataseries,(container only),0 or 1,only created if at least one Line/Patch matched
 dataseries-{i}-{slug},dataseries,series,(container only),1 per data series,slug is the DisplayName (or series{i} if unset); {i} shared by a Line+Patch pair with the SAME DisplayName
-dataseries-{i}-{slug}-line,dataseries-{i}-{slug},dataseries-line,the Line's own polyline,1 if this series has a Line,
-dataseries-{i}-{slug}-fill,dataseries-{i}-{slug},dataseries-fill,the Patch/error-band path,1 if this series has a same-DisplayName Patch,
+dataseries-{i}-{slug}-value,dataseries-{i}-{slug},dataseries-value,(container only),1 if this series has a Line,holds the Line leaf -- 'value' = the data itself
+dataseries-{i}-{slug}-line,dataseries-{i}-{slug}-value,dataseries-line,the Line's own polyline,1 if this series has a Line,
+dataseries-{i}-{slug}-conf,dataseries-{i}-{slug},dataseries-conf,(container only),1 if this series has a same-DisplayName Patch,holds the Patch leaf -- 'conf' = the confidence interval / error band
+dataseries-{i}-{slug}-fill,dataseries-{i}-{slug}-conf,dataseries-fill,the Patch/error-band path,1 if this series has a same-DisplayName Patch,
 legend,,legend,(container only),0 or 1,only created if a live Legend object exists
 legend-box,legend,legend-box,(container only),1,
 legend-box-bg,legend-box,legend-box-bg,legend background rect,1,
@@ -31,4 +35,3 @@ legend-box-border,legend-box,legend-box-border,legend border rect,1,
 legend-entry-{i},legend,legend-entry,(container only),1 per legend entry,{i} matches the entry's own dataseries-{i} series index
 legend-swatch-{i},legend-entry-{i},legend-swatch,swatch line/patch sample,1,
 legend-label-{i},legend-entry-{i},legend-label,entry text,1,content equals the series' own DisplayName
-(none -- tagged in place),(its own original MATLAB wrapper; NOT relocated),annotation,any leftover/unclaimed element,1 per leftover element,id is annotation-{k} only if the element had no id already; never grouped with other annotations -- see docs/findings.md's own note on why (paint-order risk)

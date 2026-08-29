@@ -76,12 +76,13 @@ this pipeline is its own, later, independent step, out of scope until then.
   hand afterward.
 - `groupAndTagSvg.m` — the grouping/tagging pipeline step itself: orchestrates the primitives above
   and restructures the DOM into real nested `<g id="..." data-role="...">` containers for four
-  roles — **furniture** (figure/axes background, gridlines), **axis-spine** (spine lines, one
-  sub-`<g>` per tick pairing its mark+label together, axis labels), **dataseries** (+ associated
-  error, linking a Line to a same-`DisplayName` Patch as one series), **legend** (box, one
-  sub-`<g>` per entry pairing its swatch+label together). Anything left unclaimed (e.g. an ad hoc
-  `text()` annotation) gets `id`/`data-role="annotation"` tagged IN PLACE, deliberately not grouped
-  with anything else. See `docs/grouping-hierarchy.csv` for the full, current hierarchy spec.
+  top-level roles — **furniture** (figure/axes background, gridlines, AND any leftover/unclaimed
+  element such as an ad hoc `text()` annotation, folded in per Seb's own ask 2026-08-29 — see that
+  section's own comment for the real paint-order tradeoff this involves), **axis-spine** (spine
+  lines, one sub-`<g>` per tick pairing its mark+label together, axis labels), **dataseries** (each
+  series split into its own `value`/Line and `conf`/error-band-Patch sub-group), **legend** (box, one
+  sub-`<g>` per entry pairing its swatch+label together). See `docs/grouping-hierarchy.csv` for the
+  full, current hierarchy spec (an editable outline — the intended way to propose a change).
 
   **Revised 2026-08-28** from this file's first version, which only stamped attributes onto existing
   leaf elements without moving anything (reasoning that relocating nodes risked changing paint
@@ -93,21 +94,28 @@ this pipeline is its own, later, independent step, out of scope until then.
   itself before moving it, so it never depends on whichever new, unstyled semantic group it ends up
   under, and (2) anchoring each new top-level group at whichever of its members occurs EARLIEST in
   the original document, preserving paint order relative to every other group/untouched element.
-  Annotations are the one deliberate exception: unlike axis-spine/dataseries/legend, whose members
-  are always drawn as one contiguous cluster in MATLAB's own output, annotations are arbitrary,
-  mutually unrelated leftovers with no such guarantee — confirmed for real on this repo's own
-  validation panel, where an earlier version of this file that DID combine two leftover elements
-  into one shared group dragged one of them backward past the axis-spine/data in paint order, a real
-  (if here still visually harmless) regression risk. Tagging them in place avoids the risk entirely.
 
-  Verified NOT to change rendering by rasterizing (`rsvg-convert`) both the pre-grouping baked file
-  and the post-grouping tagged file and pixel-diffing them (ImageMagick `compare`, 1% fuzz) — 0
-  differing pixels on this repo's own validated panel; `test/test_group_tag.m` runs this check
-  automatically when both tools are on `PATH`. Validated end-to-end on a plain, hand-built
-  single-axes panel (`test/test_group_tag.m`/`examples/makeExamplePanelA.m`, NOT `plotVessels.m` —
-  see the Scope discipline note above), legend on and off, including a real content collision (the
-  panel's y-axis label and its legend entry deliberately share the same string) — correctly
-  resolved to two distinct, correctly-nested elements.
+  **Revised again 2026-08-29** to fold annotations into furniture (Seb's own ask) rather than
+  tagging them in place — this DOES carry the real paint-order risk the first revision deliberately
+  avoided (annotations have no contiguity guarantee, unlike axis-spine/dataseries/legend, whose own
+  members are always one contiguous cluster in MATLAB's own output), confirmed for real on this
+  repo's own validation panel: with a 1% pixel-diff fuzz tolerance, folding a corner annotation into
+  furniture measurably shifted 4 pixels where its anti-aliased glyph edges cross the data curve.
+  Inspected directly and confirmed sub-perceptual (RGB deltas of 1/255, not one element actually
+  hiding/covering the other) — 0 pixels differ at a 2% fuzz tolerance, which this repo's own test now
+  uses instead of 1%. If this diff count ever grows non-trivially on some other panel, that's the
+  real signal an annotation has become genuinely hidden or visibly displaced, not just anti-aliasing
+  noise — investigate rather than further loosen the tolerance.
+
+  Verified NOT to (meaningfully) change rendering by rasterizing (`rsvg-convert`) both the
+  pre-grouping baked file and the post-grouping tagged file and pixel-diffing them (ImageMagick
+  `compare`, 2% fuzz) — 0 differing pixels on this repo's own validated panel; `test/test_group_tag.m`
+  runs this check automatically when both tools are on `PATH`. Validated end-to-end on a plain,
+  hand-built single-axes panel with a confidence band and a legend (`test/test_group_tag.m`/
+  `examples/makeExamplePanelA.m`, NOT `plotVessels.m` — see the Scope discipline note above), legend
+  on and off, including a real content collision (the panel's y-axis label and its legend entry
+  deliberately share the same string) — correctly resolved to two distinct, correctly-nested
+  elements.
 - `test/` — MATLAB scripts validating the above (see file headers for what each proves).
   `test_match_prototype.m`/`test_edge_cases.m` (style-fingerprint matching) and
   `test_registry_rotation.m` (font registry) still deliberately exercise a real plotting function
@@ -133,9 +141,9 @@ swatch/label) → identify axis spine/ticks → identify legend box → identify
 deliberately out-of-scope gaps (tracked, not silently accepted): `TiledChartLayout`-hosted axes
 (i.e. `plotVessels.m` and anything like it) are not supported — adapting an arbitrary MATLAB figure
 down to a plain single-axes figure is its own, later, independent step; an ad hoc `text()`
-annotation is tagged but not grouped (same known gap `dumpFontRegistry.m` already tracks for its
-font-size, for legend text and ad hoc labels); `ax.Box='on'` is not handled; a Line/Patch error-band
-pairing uses `DisplayName` equality only (no project convention exists yet for a more explicit
+annotation's font-size still isn't covered by `dumpFontRegistry.m` (same known gap, for legend text
+and ad hoc labels); `ax.Box='on'` is not handled; a Line/Patch error-band pairing uses `DisplayName`
+equality only (no project convention exists yet for a more explicit
 link); multi-legend/multi-axes figures are out of scope (single-axes-per-figure panel only).
 
 Pillar 2 (the mm-based resize round-trip: harvest a human's SVG edit to the spine → feed back into

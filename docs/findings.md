@@ -162,6 +162,42 @@ and post-grouping (tagged) SVGs are rasterized (`rsvg-convert`) and pixel-diffed
 this repo's real validation panel. `test/test_group_tag.m` runs this automatically when both tools
 are on `PATH` (warns and skips, rather than silently passing, if they aren't).
 
+## Annotations folded into furniture after all, tradeoff measured (2026-08-29)
+
+Seb's own explicit ask: fold annotations into furniture rather than leaving them tagged in place —
+overriding the decision just above. Implemented in `groupAndTagSvg.m` by including `annotationNodes`
+in furniture's own anchor computation and relocating them into a new `furniture > annotations >
+annotation-{k}` sub-group, using the exact same `relocateLeaf`/inline-presentation-attrs mechanism as
+every other group.
+
+This reintroduces, on purpose, the exact risk the section above described: confirmed for real
+immediately on this repo's own validation panel (which has an annotation positioned inside the plot
+box, overlapping the data curve's own path at one point) — with the existing 1% pixel-diff fuzz
+tolerance, 4 pixels differed between the pre- and post-fold renderings. Inspected directly rather
+than assumed: the differing pixels sit exactly where the annotation's anti-aliased glyph edges cross
+the curve, with RGB deltas of 1 unit out of 255 (e.g. `(219,170,25)` vs `(219,169,25)`) — a
+compositing-order artifact at a genuine but sub-perceptual overlap, NOT one element actually
+hiding/covering the other (which would show as a large block of full-strength color replacement).
+Confirmed sub-perceptual: 0 pixels differ at a 2% fuzz tolerance. `test/test_group_tag.m`'s own
+pixel-diff check now uses 2% (was 1%) for exactly this reason — documented there, not silently
+loosened. If this diff count ever grows non-trivially on some other panel, treat it as the real
+signal that an annotation has become genuinely hidden or visibly displaced by the fold, not as more
+anti-aliasing noise to tolerate away.
+
+Also fixed two real, independent bugs found while building the confidence-band Patch case used to
+validate the new `dataseries` `value`/`conf` split (Seb's other 2026-08-29 ask, see
+`docs/grouping-hierarchy.csv`):
+- **`matchGraphicsToSvg.m`'s point-count check didn't account for a closed patch path's own
+  explicit closing vertex.** MATLAB's `-dsvg` exporter closes a filled polygon by literally repeating
+  its first vertex as its last (not via a separate `Z` command) — a genuine, generic 83-vs-82
+  off-by-one against live `nPts` for ANY patch, not specific to this test. `parseGeometry` now drops
+  a path's own repeated closing vertex before comparing point counts.
+- **`identifyLegend.m` built a duplicate legend entry when a Line and its own confidence-band Patch
+  share one `DisplayName`.** A legend entry is per DISPLAYED ITEM, not per `snap(i)` — the loop
+  re-found the identical text/swatch nodes for the Patch after already resolving them for the Line,
+  producing two `<g id="legend-entry-1">` elements (an invalid duplicate id). Fixed by skipping any
+  `DisplayName` already resolved to an entry.
+
 ## `plotVessels.m` always hosts its axes in a `TiledChartLayout` — decided out of scope (2026-08-29)
 
 Discovered while regenerating this repo's own example artifacts: `identifyAxisSpine.m` failed
@@ -199,10 +235,11 @@ don't touch axis-spine identification and aren't affected by this.
   convention exists yet for a more explicit link (e.g. a shared `Tag` suffix); revisit if/when one
   is established in `humanMouse`.
 - An ad hoc `text()` annotation (e.g. `plotVessels.m`'s own vessel-ID corner label, drawn via
-  `drawIdCornerBox`) is tagged (`id`/`data-role="annotation"`) but deliberately NOT grouped with
-  anything else by `groupAndTagSvg.m` -- see its own "leftover bucket" note above for why. Same
-  known, deliberately tracked gap `dumpFontRegistry.m` already has for its font-size (neither an
-  axis label, tick label, data series, nor legend entry as defined here).
+  `drawIdCornerBox`) is now folded into `furniture > annotations > annotation-{k}` (Seb's own ask,
+  2026-08-29 -- see this file's own note above for the paint-order tradeoff this involves and how it
+  was measured). Its font-size is still NOT covered by `dumpFontRegistry.m` -- same known,
+  deliberately tracked gap (neither an axis label, tick label, data series, nor legend entry as
+  defined there).
 - `TiledChartLayout`-hosted axes (i.e. `plotVessels.m` and anything like it) are explicitly out of
   scope -- see this file's own note above. Adapting an arbitrary MATLAB figure (tiled or not) down
   to a plain single-axes figure suitable for this pipeline is its own, later, independent step.

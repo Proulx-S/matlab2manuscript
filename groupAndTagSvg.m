@@ -1,14 +1,15 @@
 function stats = groupAndTagSvg(ax, snap, bakedSvgFile, taggedSvgFile)
 % groupAndTagSvg  The grouping/tagging half of this repo's round-trip pipeline (README pillar 1):
-% restructures an ALREADY-BAKED svg's DOM into real nested <g> containers for four roles --
-% furniture (figure/axes background, gridlines), axis-spine (spine lines, per-tick mark+label pairs,
-% axis labels), dataseries (+ associated error), legend (box, per-entry swatch+label) -- each
-% element also getting its own `id`/`data-role` for direct addressing. Anything left unclaimed (e.g.
-% plotVessels.m's own ad hoc vessel-ID corner label) gets `id`/`data-role="annotation"` tagged IN
-% PLACE instead, deliberately NOT grouped together -- see that section's own comment below for why.
-% This gives a real SVG editor's own click-to-select/collapse behavior a usable hierarchy (select
-% the whole axis-spine, or one tick's mark+label together, in one click) instead of 60+ flat,
-% one-element-each groups at the document root.
+% restructures an ALREADY-BAKED svg's DOM into real nested <g> containers -- full current hierarchy
+% in docs/grouping-hierarchy.csv (an editable outline; edit it to propose a change). Four top-level
+% roles: furniture (figure/axes background, gridlines, AND any leftover/unclaimed element -- e.g. an
+% ad hoc `text()` annotation -- folded in per Seb's own ask, see that section's own comment for the
+% real paint-order tradeoff this involves), axis-spine (spine lines, per-tick mark+label pairs, axis
+% labels), dataseries (each series split into its own 'value'/Line and 'conf'/error-band-Patch
+% sub-group), legend (box, per-entry swatch+label). This gives a real SVG editor's own
+% click-to-select/collapse behavior a usable hierarchy (select the whole axis-spine, or one tick's
+% mark+label together, in one click) instead of 60+ flat, one-element-each groups at the document
+% root.
 %
 % REVISED 2026-08-28 from this file's first version, which stamped `id`/`data-role`/`data-group`
 % directly onto existing leaf elements without moving anything, reasoning that relocating nodes
@@ -35,8 +36,8 @@ function stats = groupAndTagSvg(ax, snap, bakedSvgFile, taggedSvgFile)
 %
 % Known, deliberately out-of-scope gaps (tracked, not silently accepted -- see docs/findings.md):
 % `ax.Box='on'` not handled (identifyAxisSpine.m errors loudly); a Line+error-band Patch is paired
-% into one series by DisplayName equality only, no more explicit project convention exists yet;
-% multi-legend/multi-axes figures out of scope.
+% into one series (and therefore one 'value'/'conf' pair) by DisplayName equality only, no more
+% explicit project convention exists yet; multi-legend/multi-axes figures out of scope.
 
 doc = xmlread(bakedSvgFile);
 canvasSizePt = getCanvasSizeFromDoc(doc);
@@ -98,7 +99,7 @@ end
 
 % --- anchors: computed BEFORE any mutation, off the still-original document, so each new group's
 % insertion point reflects whichever of its members occurs earliest in draw order ---
-furnitureMembers = [{furn.figureBgNode, furn.axesBgNode}, furn.gridlineNodes(:)'];
+furnitureMembers = [{furn.figureBgNode, furn.axesBgNode}, furn.gridlineNodes(:)', annotationNodes(:)'];
 spineMembers = [{spineInfo.xSpineNode, spineInfo.ySpineNode}, spineInfo.xTickNodes(:)', spineInfo.yTickNodes(:)', ...
     xLabelNodes(:)', yLabelNodes(:)', {axisLabelNode.title, axisLabelNode.xlabel, axisLabelNode.ylabel}];
 dataMembers = {};
@@ -122,8 +123,8 @@ anchorLegend = earliestOriginalChild(root, legendMembers);
 stats = struct('nDataSeries',0, 'nLegendEntries',0, 'nXTicks',0, 'nYTicks',0, 'nAxisLabels',0, ...
     'nFurnitureGridlines',0, 'nAnnotations',0);
 
-% --- furniture ---
-if ~isempty(furn.figureBgNode) || ~isempty(furn.axesBgNode) || ~isempty(furn.gridlineNodes)
+% --- furniture (+ annotations, folded in per Seb's own ask 2026-08-29) ---
+if ~isempty(furn.figureBgNode) || ~isempty(furn.axesBgNode) || ~isempty(furn.gridlineNodes) || ~isempty(annotationNodes)
     furnitureG = newGroup(doc, 'furniture', 'furniture');
     insertAt(root, furnitureG, anchorFurniture);
     if ~isempty(furn.figureBgNode)
@@ -142,6 +143,26 @@ if ~isempty(furn.figureBgNode) || ~isempty(furn.axesBgNode) || ~isempty(furn.gri
             tagLeaf(furn.gridlineNodes{k}, sprintf('gridline-%d',k), 'gridline');
         end
         stats.nFurnitureGridlines = numel(furn.gridlineNodes);
+    end
+    if ~isempty(annotationNodes)
+        % Folded into furniture on Seb's own explicit ask -- this DOES physically relocate them
+        % (dragging each one back to wherever furniture's own anchor is, typically the very front of
+        % the document, since figure-background is almost always the earliest element overall), the
+        % exact class of paint-order change this file's own design otherwise avoids for leftover
+        % elements (they have no contiguity guarantee with each other OR with furniture -- see
+        % docs/findings.md). Verified case-by-case via this file's own pixel-diff test rather than
+        % assumed safe; if a real panel ever needs an annotation to render on TOP of data/spine/
+        % legend (its most common real use, e.g. a corner label), folding it into furniture will
+        % likely break that -- flag it if `test_group_tag.m`'s pixel-diff check ever catches this.
+        annG = newGroup(doc, 'annotations', 'annotations');
+        furnitureG.appendChild(annG);
+        for k = 1:numel(annotationNodes)
+            relocateLeaf(annotationNodes{k}, annG);
+            id = char(annotationNodes{k}.getAttribute('id'));
+            if isempty(id); id = sprintf('annotation-%d',k); end
+            tagLeaf(annotationNodes{k}, id, 'annotation');
+        end
+        stats.nAnnotations = numel(annotationNodes);
     end
 end
 
@@ -192,33 +213,45 @@ for role = {'title','xlabel','ylabel'}
     stats.nAxisLabels = stats.nAxisLabels + 1;
 end
 
-% --- data series (+ associated error, linked by shared DisplayName) ---
+% --- data series (+ associated error, linked by shared DisplayName), each split into its own
+% 'value' (the Line) and 'conf' (the confidence-interval/error-band Patch) sub-group -- per Seb's
+% own ask 2026-08-29, docs/grouping-hierarchy.csv. ---
 if ~isempty(dataMembers)
     dataG = newGroup(doc, 'dataseries', 'dataseries');
     insertAt(root, dataG, anchorData);
     seriesGroupOf = containers.Map('KeyType','double','ValueType','any');
+    valueGroupOf = containers.Map('KeyType','double','ValueType','any');
+    confGroupOf = containers.Map('KeyType','double','ValueType','any');
     for i = 1:numel(snap)
         if isempty(matches(i).node); continue; end
         si = seriesIndexOf(i);
+        slug = slugify(snap(i).displayName, sprintf('series%d',si));
         if ~isKey(seriesGroupOf, si)
-            slug = slugify(snap(i).displayName, sprintf('series%d',si));
             sg = newGroup(doc, sprintf('dataseries-%d-%s',si,slug), 'series');
             sg.setAttribute('data-series-index', num2str(si));
             if ~isempty(snap(i).displayName); sg.setAttribute('data-display-name', snap(i).displayName); end
             dataG.appendChild(sg);
             seriesGroupOf(si) = sg;
         end
-        % suffix is REQUIRED even for the common (line-only, no error-band) case -- without one, a
-        % line-only series' leaf would get the exact same id as its own parent "series" group
+        if strcmp(snap(i).type,'patch')
+            role = 'dataseries-fill'; leafSuffix = '-fill'; subSuffix = '-conf'; subRole = 'dataseries-conf'; subMap = confGroupOf;
+        else
+            role = 'dataseries-line'; leafSuffix = '-line'; subSuffix = '-value'; subRole = 'dataseries-value'; subMap = valueGroupOf;
+        end
+        if ~isKey(subMap, si)
+            subG = newGroup(doc, sprintf('dataseries-%d-%s%s',si,slug,subSuffix), subRole);
+            seriesGroupOf(si).appendChild(subG);
+            subMap(si) = subG; %#ok<NASGU> -- subMap is a handle (containers.Map): this mutates
+                                % valueGroupOf/confGroupOf directly, not a local copy
+        end
+        % leafSuffix is REQUIRED even for the common (line-only, no error-band) case -- without one,
+        % a line-only series' leaf would get the exact same id as its own parent "series" group
         % (both "dataseries-<i>-<slug>"), an invalid duplicate id (confirmed real: caught by
         % inspecting this repo's own generated output, not by the tests -- findTestById's own
         % document-order search silently returned the GROUP instead of the intended leaf, since
         % getElementsByTagName('*') visits a parent before its children).
-        role = 'dataseries-line'; suffix = '-line';
-        if strcmp(snap(i).type,'patch'); role = 'dataseries-fill'; suffix = '-fill'; end
-        relocateLeaf(matches(i).node, seriesGroupOf(si));
-        slug = slugify(snap(i).displayName, sprintf('series%d',si));
-        tagLeaf(matches(i).node, sprintf('dataseries-%d-%s%s',si,slug,suffix), role);
+        relocateLeaf(matches(i).node, subMap(si));
+        tagLeaf(matches(i).node, sprintf('dataseries-%d-%s%s',si,slug,leafSuffix), role);
         stats.nDataSeries = stats.nDataSeries + 1;
     end
 end
@@ -246,23 +279,6 @@ if ~isempty(legInfo)
     end
 end
 
-% --- annotations (catch-all for anything not claimed above, e.g. plotVessels.m's ad hoc vessel-ID
-% corner label -- known, deliberately tracked gap: this tags it, but doesn't further interpret it).
-% Deliberately tagged IN PLACE, never relocated or combined into one shared group: unlike axis-
-% spine/dataseries/legend, whose own members are always drawn as one contiguous cluster in MATLAB's
-% output (verified empirically), annotations are by definition arbitrary, mutually-unrelated
-% leftovers with no such guarantee -- confirmed for real on this repo's own validation panel, where
-% combining two leftover elements (a whole-figure title-ish text and the vessel-ID corner label, far
-% apart in the original document) into one shared group at the EARLIER one's position dragged the
-% LATER one backward past the axis-spine and data series in paint order, a genuine visual-regression
-% risk this file's whole design is meant to avoid. Tagging in place carries none of that risk. ---
-for k = 1:numel(annotationNodes)
-    if isempty(char(annotationNodes{k}.getAttribute('id')))
-        annotationNodes{k}.setAttribute('id', sprintf('annotation-%d',k));
-    end
-    annotationNodes{k}.setAttribute('data-role','annotation');
-end
-stats.nAnnotations = numel(annotationNodes);
 
 pruneEmptyGroups(root);
 
