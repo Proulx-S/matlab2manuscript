@@ -46,7 +46,7 @@ identityBakedFile = fullfile(outDir,'box_on_identity_baked.svg');
 system(sprintf('python3 %s %s %s', fullfile(repoDir,'bakeTransforms.py'), identityRawFile, identityBakedFile));
 
 taggedFile = fullfile(outDir,'box_on_tagged.svg');
-stats = groupAndTagSvg(ax, snap, bakedFile, taggedFile, identityBakedFile);
+stats = groupAndTagSvg(ax, snap, bakedFile, taggedFile, 'panelBox', identityBakedFile);
 close(fig);
 
 fprintf('stats: nXTicks=%d nYTicks=%d\n', stats.nXTicks, stats.nYTicks);
@@ -54,21 +54,21 @@ assert(stats.nXTicks == nXTicksExpected, 'expected %d primary x-ticks', nXTicksE
 assert(stats.nYTicks == nYTicksExpected, 'expected %d primary y-ticks', nYTicksExpected);
 
 docTagged = xmlread(taggedFile);
-assert(~isempty(findTestById(docTagged,'axis-spine-x')), 'missing primary x spine');
-assert(~isempty(findTestById(docTagged,'axis-spine-y')), 'missing primary y spine');
-assert(~isempty(findTestById(docTagged,'axis-spine-x-mirror')), 'missing mirror x spine (Box=on)');
-assert(~isempty(findTestById(docTagged,'axis-spine-y-mirror')), 'missing mirror y spine (Box=on)');
+assert(~isempty(findTestById(docTagged,'panelBox-axis-spine-x')), 'missing primary x spine');
+assert(~isempty(findTestById(docTagged,'panelBox-axis-spine-y')), 'missing primary y spine');
+assert(~isempty(findTestById(docTagged,'panelBox-axis-spine-x-mirror')), 'missing mirror x spine (Box=on)');
+assert(~isempty(findTestById(docTagged,'panelBox-axis-spine-y-mirror')), 'missing mirror y spine (Box=on)');
 fprintf('primary + mirror spine lines both tagged\n');
 
-nMirrorXTicks = countIdsWithPrefix(docTagged, 'axis-tick-x-mirror-');
-nMirrorYTicks = countIdsWithPrefix(docTagged, 'axis-tick-y-mirror-');
+nMirrorXTicks = countIdsWithPrefix(docTagged, 'panelBox-axis-tick-x-mirror-');
+nMirrorYTicks = countIdsWithPrefix(docTagged, 'panelBox-axis-tick-y-mirror-');
 fprintf('mirror x-ticks tagged: %d (expect %d), mirror y-ticks tagged: %d (expect %d)\n', ...
     nMirrorXTicks, nXTicksExpected, nMirrorYTicks, nYTicksExpected);
 assert(nMirrorXTicks == nXTicksExpected, 'expected %d mirror x-ticks tagged', nXTicksExpected);
 assert(nMirrorYTicks == nYTicksExpected, 'expected %d mirror y-ticks tagged', nYTicksExpected);
 
 % Mirror ticks must NOT have a tick-label counterpart -- MATLAB never draws one (confirmed real).
-mirrorTickLabelCount = countIdsWithPrefix(docTagged, 'axis-ticklabel-x-mirror-') + countIdsWithPrefix(docTagged, 'axis-ticklabel-y-mirror-');
+mirrorTickLabelCount = countIdsWithPrefix(docTagged, 'panelBox-axis-ticklabel-x-mirror-') + countIdsWithPrefix(docTagged, 'panelBox-axis-ticklabel-y-mirror-');
 assert(mirrorTickLabelCount == 0, 'unexpectedly found a mirror tick LABEL -- MATLAB should never draw one');
 
 % Element-count invariant + no duplicate ids, same discipline as test_group_tag.m.

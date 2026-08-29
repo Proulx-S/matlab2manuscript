@@ -30,16 +30,26 @@ function result = runPillar1(ax, outDir, figId, panId, opts)
 %           caller's own figure). TiledChartLayout-hosted axes ARE supported (see above).
 % outDir    directory to write `<figId>_<panId>_tagged.svg` (and, if opts.keepIntermediates, the four
 %           intermediate files) into
-% figId     compulsory id for the eventual composed multi-panel figure this panel belongs to (used
-%           here only for the output filename stem -- embedding figId/panId into every tagged
-%           element's own id, for safe multi-panel composition, is a DELIBERATELY DEFERRED later
-%           step, not yet implemented -- see docs/findings.md)
-% panId     compulsory id for this panel within that figure (same file-naming role as figId above)
+% figId     compulsory id for the eventual composed multi-panel figure this panel belongs to --
+%           names the output filename stem; `panId` (not `figId`) is what groupAndTagSvg.m actually
+%           uses to make every tagged element's own id collision-safe across panels (2026-08-29, see
+%           syncPanel.m)
+% panId     compulsory id for this panel. Passed straight through to groupAndTagSvg.m, which
+%           prefixes every id it generates with `{panId}-` and wraps the whole panel in one
+%           outermost `<g id="{panId}-root" data-panel="{panId}">` -- see that file's own header --
+%           so multiple panels' output can share one composed document with no id collisions
+%           (2026-08-29, see syncPanel.m)
 % opts.keepIntermediates  (default false) keep the 4 intermediate SVG files instead of deleting them
 % opts.pythonExe          (default 'python3') interpreter used to invoke bakeTransforms.py
 % opts.canvasUnits        (default 'inches') units for opts.canvasSize
 % opts.canvasSize         (default [8.5 11], US Letter portrait) the copy figure's fixed [width
 %                         height] canvas size, in opts.canvasUnits
+% opts.innerPositionOverride  (default [], meaning: use ax.InnerPosition as-is) when given, this
+%                         `[x y w h]` normalized rect is used as the COPY's InnerPosition INSTEAD of
+%                         reading it from `ax` -- the one hook syncPanel.m needs to force a specific
+%                         target InnerPosition (recovered from wherever a human repositioned/resized
+%                         this panel post-insertion) onto a regenerated panel. `ax` itself is still
+%                         never modified either way.
 %
 % result.taggedFile   full path to the final tagged SVG (always kept, regardless of opts)
 % result.stats        groupAndTagSvg.m's own per-role counts struct
@@ -54,15 +64,16 @@ if nargin == 0
         'ax        live axes (NOT yet closed, never modified) -- Box=''off''/''on'' both supported,\n' ...
         '          ax.Units must be ''normalized''; TiledChartLayout-hosted axes ARE supported\n' ...
         'outDir    directory to write outputs into\n' ...
-        'figId     compulsory id for the eventual composed multi-panel figure (naming only for now)\n' ...
-        'panId     compulsory id for this panel (naming only for now)\n' ...
+        'figId     compulsory id for the eventual composed multi-panel figure (output naming)\n' ...
+        'panId     compulsory id for this panel (output naming + collision-safe id prefixing)\n' ...
         'opts.keepIntermediates  (default false) keep the 4 intermediate SVG files\n' ...
         'opts.pythonExe          (default ''python3'')\n' ...
         'opts.canvasUnits        (default ''inches'')\n' ...
-        'opts.canvasSize         (default [8.5 11], US Letter portrait)\n\n' ...
+        'opts.canvasSize         (default [8.5 11], US Letter portrait)\n' ...
+        'opts.innerPositionOverride  (default [], use ax.InnerPosition as-is)\n\n' ...
         'Returns result.taggedFile (path) and result.stats (groupAndTagSvg.m''s own counts).\n']);
     result = struct('ax',[], 'outDir','', 'figId','', 'panId','', 'keepIntermediates',false, ...
-        'pythonExe','python3', 'canvasUnits','inches', 'canvasSize',[8.5 11]);
+        'pythonExe','python3', 'canvasUnits','inches', 'canvasSize',[8.5 11], 'innerPositionOverride',[]);
     return
 end
 
@@ -71,6 +82,7 @@ if ~isfield(opts,'keepIntermediates'); opts.keepIntermediates = false; end
 if ~isfield(opts,'pythonExe'); opts.pythonExe = 'python3'; end
 if ~isfield(opts,'canvasUnits'); opts.canvasUnits = 'inches'; end
 if ~isfield(opts,'canvasSize'); opts.canvasSize = [8.5 11]; end
+if ~isfield(opts,'innerPositionOverride'); opts.innerPositionOverride = []; end
 
 assert(strcmp(ax.Units,'normalized'), 'runPillar1:wrongUnits', ...
     'ax.Units must be ''normalized'' (so ax.InnerPosition is a portable fraction) -- got ''%s''.', ax.Units);
@@ -79,7 +91,7 @@ repoDir = fileparts(mfilename('fullpath'));
 bakeScript = fullfile(repoDir, 'bakeTransforms.py');
 baseName = sprintf('%s_%s', figId, panId);
 
-[fig2, ax2] = copyAxesToStandardCanvas(ax, opts.canvasUnits, opts.canvasSize);
+[fig2, ax2] = copyAxesToStandardCanvas(ax, opts.canvasUnits, opts.canvasSize, opts.innerPositionOverride);
 cleanupFig2 = onCleanup(@() close(fig2));
 
 rawFile           = fullfile(outDir, [baseName '_raw.svg']);
@@ -96,7 +108,7 @@ runBake(opts.pythonExe, bakeScript, rawFile, bakedFile);
 dumpIdentitySvg(fig2, snap, identityRawFile);
 runBake(opts.pythonExe, bakeScript, identityRawFile, identityBakedFile);
 
-stats = groupAndTagSvg(ax2, snap, bakedFile, taggedFile, identityBakedFile);
+stats = groupAndTagSvg(ax2, snap, bakedFile, taggedFile, panId, identityBakedFile);
 
 if ~opts.keepIntermediates
     delete(rawFile);
@@ -109,7 +121,7 @@ result.taggedFile = taggedFile;
 result.stats = stats;
 end
 
-function [fig2, ax2] = copyAxesToStandardCanvas(ax, canvasUnits, canvasSize)
+function [fig2, ax2] = copyAxesToStandardCanvas(ax, canvasUnits, canvasSize, innerPositionOverride)
 % Copies `ax` (and its Legend, if any) into a fresh figure sized to the fixed standard canvas,
 % re-establishing everything `copyobj` is known to drop or reset (2026-08-29 empirical findings):
 %   - copying `ax` alone silently DROPS its Legend -- must copy [ax, ax.Legend] together.
@@ -123,7 +135,14 @@ function [fig2, ax2] = copyAxesToStandardCanvas(ax, canvasUnits, canvasSize)
 %     already documented in docs/findings.md, since XAxis/YAxis FontSize resets XLabel/YLabel's own
 %     FontSizeMode back to auto if set afterward).
 % This also detaches `ax` from a TiledChartLayout parent cleanly, if that's what it was hosted in.
-origInnerPosition = ax.InnerPosition;
+%
+% innerPositionOverride (2026-08-29, syncPanel.m): when given, used as the copy's InnerPosition
+% INSTEAD of ax.InnerPosition -- ax itself is still read-only either way.
+if isempty(innerPositionOverride)
+    origInnerPosition = ax.InnerPosition;
+else
+    origInnerPosition = innerPositionOverride;
+end
 origXAxisFS  = ax.XAxis.FontSize;
 origYAxisFS  = ax.YAxis.FontSize;
 origXLabelFS = ax.XLabel.FontSize;

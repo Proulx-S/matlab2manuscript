@@ -143,7 +143,7 @@ dumpIdentitySvg(manualFig2, snap3, manualIdRaw);
 manualIdBaked = fullfile(outDir,'wraptest_manual_identity.svg');
 system(sprintf('python3 %s %s %s', fullfile(repoDir,'bakeTransforms.py'), manualIdRaw, manualIdBaked));
 manualTagged = fullfile(outDir,'wraptest_manual_tagged.svg');
-manualStats = groupAndTagSvg(manualAx2, snap3, manualBaked, manualTagged, manualIdBaked);
+manualStats = groupAndTagSvg(manualAx2, snap3, manualBaked, manualTagged, 'panelA', manualIdBaked);
 close(manualFig2);
 close(fig3);
 
