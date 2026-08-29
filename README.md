@@ -39,18 +39,38 @@ export directly from the caller's own raw figure.
   `copyobj`'s `ax` (and its Legend) into a fresh figure on a fixed standard canvas (default US
   Letter portrait, `opts.canvasSize`/`opts.canvasUnits`) -- `ax`/its own figure are NEVER touched --
   then runs snapshot → raw export → bake → identity export → identity bake → group/tag on the COPY,
-  producing just `<figId>_<panId>_tagged.svg`. `figId`/`panId` are compulsory (they name the output
-  stem; embedding them into every tagged element's own `id`, for safe multi-panel composition, is a
-  deliberately deferred later step -- see docs/findings.md). The four intermediate files this needs
-  along the way are deleted once no longer needed by default — `opts.keepIntermediates=true` keeps
-  them (`<figId>_<panId>_raw.svg`, `<figId>_<panId>.svg` baked,
+  producing just `<figId>_<panId>_tagged.svg`. `figId`/`panId` are compulsory: `figId` names the
+  output stem, and `panId` is passed straight through to `groupAndTagSvg.m`, which prefixes every
+  tagged element's own `id` with `{panId}-` and wraps the whole panel in one outermost
+  `<g id="{panId}-root" data-panel="{panId}">` (2026-08-29 -- see `syncPanel.m` below), so multiple
+  panels' output can share one composed document with no id collisions. The four intermediate files
+  this needs along the way are deleted once no longer needed by default —
+  `opts.keepIntermediates=true` keeps them (`<figId>_<panId>_raw.svg`, `<figId>_<panId>.svg` baked,
   `<figId>_<panId>_identity_raw.svg`/`<figId>_<panId>_identity.svg`). Call with no arguments for a
   self-populating default-opts struct + help text. Validated (`test/test_run_pillar1.m`) to produce
   BYTE-IDENTICAL output to calling every step (including the copy) by hand, and
   (`test/test_tiledlayout_support.m`) that a `TiledChartLayout`-hosted axes produces identical output
   to an equivalent plain axes -- this is the primary way to run pillar 1 now; the individual
-  functions below remain directly callable for finer-grained control or when composing pillar 1 into
-  something larger (e.g. pillar 2, eventually).
+  functions below remain directly callable for finer-grained control.
+- **`syncPanel.m`** (2026-08-29) — the pillar-2 sync/insert operation: `result = syncPanel(ax,
+  outDir, figId, panId, opts)` places one panel into a composed multi-panel figure
+  (`<figId>.svg`) and, on every later call, recovers wherever a human repositioned/resized that
+  panel POST-INSERTION (in a vector editor -- not on the standalone single-panel SVG, per Seb's own
+  framing of this constraint) and feeds it back into `runPillar1.m`'s `opts.innerPositionOverride`
+  for regeneration, so a resize is always a real re-render (correct absolute font-size/stroke-width
+  at the new size), never a naively-scaled vector. First insertion and every later resync are the
+  SAME operation -- there's no separate "insert" step. Mechanism: since every panel (and the
+  composed figure) shares one fixed physical canvas (`runPillar1.m`'s copy step), a panel's
+  placement in the composed document and its own `ax.InnerPosition` are literally the same number,
+  so recovering an edit is a direct measurement (this panel's tagged spine's CURRENT bounding box,
+  resolved through the full ancestor-transform chain via `resolveElementCTM.m` -- NOT
+  `bakeTransforms.py`, which only ever has to parse MATLAB's own narrow `matrix()`-only export
+  dialect, see that file's own header) divided by the canvas size, never a diff against a stored
+  "before" value. A translate and an aspect-ratio-changing scale both map directly onto
+  `InnerPosition`'s independent `[x y w h]` fractions; only rotation has no equivalent and is
+  detected and rejected loudly. **Known validation gap**: exercised only against SIMULATED edits
+  (`test/test_sync_panel.m` directly rewrites the composed SVG's DOM between calls) -- not yet
+  round-tripped through a real external vector editor (Illustrator/Inkscape). See `docs/findings.md`.
 - `bakeTransforms.py` — flattens every `transform="matrix(...)"` MATLAB's exporter emits directly
   into each element's own geometry/size attributes (compulsory first step after export — see
   `docs/findings.md` for why). Preserves `<text>` as real text; a genuinely rotated `<text>`
@@ -187,18 +207,20 @@ export (`dumpIdentitySvg.m`) → match data series by identity-color cross-refer
 swatch/label) → identify axis spine/ticks → identify legend box → identify furniture
 (background/gridlines) → restructure into real nested `<g id=... data-role=...>` groups (spec:
 `docs/grouping-hierarchy.csv`), verified pixel-identical to the un-grouped baked file. Known,
-deliberately out-of-scope gaps (tracked, not silently accepted): multi-legend/multi-axes figures are
-out of scope (single-axes-per-figure panel only); embedding `figId`/`panId` into every tagged
-element's own `id` (needed for safe multi-panel composition — colliding ids otherwise once more
-than one panel lands in one composed SVG) is deferred to the multi-panel composition step itself,
-not yet built. (`ax.Box='on'` and the legend/annotation font-size gap were both fixed 2026-08-29 —
-see `identifyAxisSpine.m` and the font-size correction note above; Line/Patch error-band pairing
-previously used `DisplayName` equality only — REVISED 2026-08-29, now uses `Tag`, see
-`assignSeriesIndices.m`; `TiledChartLayout`-hosted axes — i.e. `plotVessels.m` and anything like it
-— were out of scope, REVISED 2026-08-29, now supported via `runPillar1.m`'s own `copyobj`-based copy
-step, see below.)
+deliberately out-of-scope gap: multi-legend/multi-axes figures are out of scope
+(single-axes-per-figure panel only). (`ax.Box='on'` and the legend/annotation font-size gap were
+both fixed 2026-08-29 — see `identifyAxisSpine.m` and the font-size correction note above;
+Line/Patch error-band pairing previously used `DisplayName` equality only — REVISED 2026-08-29, now
+uses `Tag`, see `assignSeriesIndices.m`; `TiledChartLayout`-hosted axes — i.e. `plotVessels.m` and
+anything like it — were out of scope, REVISED 2026-08-29, now supported via `runPillar1.m`'s own
+`copyobj`-based copy step; embedding `figId`/`panId` into every tagged element's own `id` for safe
+multi-panel composition was deferred, REVISED 2026-08-29 same day, now implemented in
+`groupAndTagSvg.m` and used by the new `syncPanel.m` pillar-2 sync/insert operation, see above and
+`docs/findings.md` -- its round-trip has only been exercised against SIMULATED editor edits so far,
+not a real external vector editor.)
 
-Pillar 2 (the mm-based resize round-trip: harvest a human's SVG edit to the spine → feed back into
-MATLAB → regenerate everything else around it → re-place) is designed and spot-verified (MATLAB
-`PositionConstraint='innerposition'` + `InnerPosition`, confirmed to work exactly once transforms
-are baked) but not yet built.
+Pillar 2 (the round-trip: harvest wherever a human repositioned/resized a panel AFTER inserting it
+into the composed multi-panel figure → feed back into MATLAB → regenerate → re-place) is now built
+as `syncPanel.m` (2026-08-29), covered by `test/test_sync_panel.m`. Not yet done: a real
+external-vector-editor round-trip (only simulated edits tested so far -- see Layout section above
+and `docs/findings.md`).

@@ -1,4 +1,4 @@
-function stats = groupAndTagSvg(ax, snap, bakedSvgFile, taggedSvgFile, identityBakedSvgFile)
+function stats = groupAndTagSvg(ax, snap, bakedSvgFile, taggedSvgFile, panId, identityBakedSvgFile)
 % groupAndTagSvg  The grouping/tagging half of this repo's round-trip pipeline (README pillar 1):
 % restructures an ALREADY-BAKED svg's DOM into real nested <g> containers -- full current hierarchy
 % in docs/grouping-hierarchy.csv (an editable outline; edit it to propose a change). Four top-level
@@ -31,6 +31,18 @@ function stats = groupAndTagSvg(ax, snap, bakedSvgFile, taggedSvgFile, identityB
 % snap           snapshotAxesStyle(ax), captured BEFORE export/close
 % bakedSvgFile   path to the baked (bakeTransforms.py) SVG -- absolute coordinates required
 % taggedSvgFile  output path (written via xmlwrite)
+% panId          this panel's own id within whatever composed multi-panel figure it may end up in
+%                (2026-08-29 -- see syncPanel.m). Every id this function generates is prefixed with
+%                `{panId}-`, and the whole panel is wrapped in one outermost `<g id="{panId}-root"
+%                data-panel="{panId}">` (reusing MATLAB's own single top-level `<g>` -- see
+%                getRootGroup.m's own comment -- as that wrapper directly, rather than inserting a
+%                redundant extra one) so multiple panels' tagged output can be merged into one
+%                document with no id collisions (`data-role`/`data-group` VALUES are deliberately
+%                left untouched -- those are meant to repeat identically across panels, e.g.
+%                selecting every panel's own axis-spine at once is a real, intended cross-panel
+%                operation). Safe as a blanket rename because nothing upstream of this function
+%                (MATLAB's own -dsvg export, bakeTransforms.py) ever emits an `id` attribute of its
+%                own to collide with -- confirmed empirically, 2026-08-29.
 % identityBakedSvgFile  (optional) a baked (bakeTransforms.py) export of dumpIdentitySvg.m's own
 %                identity-colored copy of the SAME figure/snap -- when given, data-series matching
 %                uses identity-color cross-referencing (matchGraphicsToSvg.m) instead of real-color
@@ -66,7 +78,7 @@ root = getRootGroup(doc);
 % --- identification only below (read-only queries against the still-untouched doc; every node
 % reference collected here stays valid after later mutation -- Java DOM objects don't invalidate
 % when detached, only their position changes) ---
-if nargin >= 5 && ~isempty(identityBakedSvgFile)
+if nargin >= 6 && ~isempty(identityBakedSvgFile)
     matches = matchGraphicsToSvg(snap, doc, identityBakedSvgFile);
 else
     matches = matchGraphicsToSvg(snap, doc);
@@ -385,7 +397,26 @@ end
 
 pruneEmptyGroups(root);
 
+% Blanket id-prefix pass MUST run before wrapping root as the panel's own id below -- root has no
+% `id` yet at this point (getRootGroup.m never sets one), so it's untouched by this pass, then gets
+% its own final id set directly afterward (prefixing it too would double it, e.g. "panelA-panelA-root").
+prefixAllIds(root, panId);
+root.setAttribute('id', [panId '-root']);
+root.setAttribute('data-panel', panId);
+
 xmlwrite(taggedSvgFile, doc);
+end
+
+function prefixAllIds(root, panId)
+% Rewrites every id="..." already set within root's subtree to "{panId}-...", so this panel's
+% output can share a document with other panels with no collision (see this file's own header).
+els = root.getElementsByTagName('*');
+for i = 0:els.getLength()-1
+    n = els.item(i);
+    if n.hasAttribute('id')
+        n.setAttribute('id', [panId '-' char(n.getAttribute('id'))]);
+    end
+end
 end
 
 % ============================== identification helpers ==============================

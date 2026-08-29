@@ -71,7 +71,7 @@ identityBakedFile = fullfile(outDir,'group_tag_identity_baked.svg');
 system(sprintf('python3 %s %s %s', fullfile(repoDir,'bakeTransforms.py'), identityRawFile, identityBakedFile));
 
 taggedFile = fullfile(outDir,'group_tag_tagged.svg');
-stats = groupAndTagSvg(ax, snap, bakedFile, taggedFile, identityBakedFile);
+stats = groupAndTagSvg(ax, snap, bakedFile, taggedFile, 'panelA', identityBakedFile);
 close(fig);   % safe to close now -- groupAndTagSvg only needed the live ax/fig up to this point
 
 fprintf('stats: nDataSeries=%d nLegendEntries=%d nXTicks=%d nYTicks=%d nAxisLabels=%d nFurnitureGridlines=%d nAnnotations=%d\n', ...
@@ -105,6 +105,8 @@ end
 % --- top-level structure: exactly the expected semantic groups, in the expected (paint-order-safe)
 % sequence -- nothing left as a stray element directly under MATLAB's own outer wrapper <g>.
 rootG = getTestRootGroup(docTagged);
+assert(strcmp(char(rootG.getAttribute('id')), 'panelA-root'), 'panel root <g> missing/wrong id (expected "panelA-root")');
+assert(strcmp(char(rootG.getAttribute('data-panel')), 'panelA'), 'panel root <g> missing/wrong data-panel attribute');
 topKids = rootG.getChildNodes();
 topGroupIds = {};
 for i = 0:topKids.getLength()-1
@@ -116,57 +118,57 @@ end
 fprintf('top-level groups (paint order): %s\n', strjoin(topGroupIds, ', '));
 % Annotations are now folded INTO furniture (Seb's own ask, 2026-08-29) -- every top-level <g> is
 % expected to be one of the four named semantic groups, nothing left unnamed/stray.
-assert(isequal(topGroupIds, {'furniture','axis-spine','dataseries','legend'}), ...
+assert(isequal(topGroupIds, {'panelA-furniture','panelA-axis-spine','panelA-dataseries','panelA-legend'}), ...
     'unexpected top-level group set/order: %s', strjoin(topGroupIds,', '));
 
 % --- real nesting: the whole point of this rewrite -- verify actual DOM parent/child relationships,
 % not just that every id string happens to appear somewhere in the file.
-spineX = findTestById(docTagged,'axis-spine-x');
-assert(hasTestParentId(spineX,'axis-spine-lines'), 'axis-spine-x not directly under axis-spine-lines');
-assert(hasTestAncestorId(spineX,'axis-spine'), 'axis-spine-x not nested under axis-spine');
+spineX = findTestById(docTagged,'panelA-axis-spine-x');
+assert(hasTestParentId(spineX,'panelA-axis-spine-lines'), 'axis-spine-x not directly under axis-spine-lines');
+assert(hasTestAncestorId(spineX,'panelA-axis-spine'), 'axis-spine-x not nested under axis-spine');
 
-tick1Mark = findTestById(docTagged,'axis-tick-x-1-mark');
-tick1Label = findTestById(docTagged,'axis-ticklabel-x-1');
-assert(hasTestParentId(tick1Mark,'axis-tick-x-1') && hasTestParentId(tick1Label,'axis-tick-x-1'), ...
+tick1Mark = findTestById(docTagged,'panelA-axis-tick-x-1-mark');
+tick1Label = findTestById(docTagged,'panelA-axis-ticklabel-x-1');
+assert(hasTestParentId(tick1Mark,'panelA-axis-tick-x-1') && hasTestParentId(tick1Label,'panelA-axis-tick-x-1'), ...
     'x-tick 1''s mark and label are not grouped together under their own per-tick group');
-assert(hasTestAncestorId(tick1Mark,'axis-ticks-x') && hasTestAncestorId(tick1Mark,'axis-spine'), ...
+assert(hasTestAncestorId(tick1Mark,'panelA-axis-ticks-x') && hasTestAncestorId(tick1Mark,'panelA-axis-spine'), ...
     'x-tick 1 not nested under axis-ticks-x/axis-spine');
 
 lastY = nYTicksExpected;
-tickLastYMark = findTestById(docTagged, sprintf('axis-tick-y-%d-mark',lastY));
-tickLastYLabel = findTestById(docTagged, sprintf('axis-ticklabel-y-%d',lastY));
-assert(hasTestParentId(tickLastYMark, sprintf('axis-tick-y-%d',lastY)) && hasTestParentId(tickLastYLabel, sprintf('axis-tick-y-%d',lastY)), ...
+tickLastYMark = findTestById(docTagged, sprintf('panelA-axis-tick-y-%d-mark',lastY));
+tickLastYLabel = findTestById(docTagged, sprintf('panelA-axis-ticklabel-y-%d',lastY));
+assert(hasTestParentId(tickLastYMark, sprintf('panelA-axis-tick-y-%d',lastY)) && hasTestParentId(tickLastYLabel, sprintf('panelA-axis-tick-y-%d',lastY)), ...
     'last y-tick''s mark and label are not grouped together');
 
-xlabelNode = findTestById(docTagged,'axis-xlabel');
-assert(hasTestParentId(xlabelNode,'axis-labels') && hasTestAncestorId(xlabelNode,'axis-spine'), ...
+xlabelNode = findTestById(docTagged,'panelA-axis-xlabel');
+assert(hasTestParentId(xlabelNode,'panelA-axis-labels') && hasTestAncestorId(xlabelNode,'panelA-axis-spine'), ...
     'axis-xlabel not nested under axis-labels/axis-spine');
 
-dataNode = findTestById(docTagged,'dataseries-1-signal-line');
-assert(hasTestParentId(dataNode,'dataseries-1-signal-value'), 'data series line not directly under its own value sub-group');
-assert(hasTestAncestorId(dataNode,'dataseries-1-signal') && hasTestAncestorId(dataNode,'dataseries'), ...
+dataNode = findTestById(docTagged,'panelA-dataseries-1-signal-line');
+assert(hasTestParentId(dataNode,'panelA-dataseries-1-signal-value'), 'data series line not directly under its own value sub-group');
+assert(hasTestAncestorId(dataNode,'panelA-dataseries-1-signal') && hasTestAncestorId(dataNode,'panelA-dataseries'), ...
     'data series line not nested under its own series/top-level dataseries group');
 
-confNode = findTestById(docTagged,'dataseries-1-signal-fill');
-assert(hasTestParentId(confNode,'dataseries-1-signal-conf'), 'confidence-band patch not directly under its own conf sub-group');
-assert(hasTestAncestorId(confNode,'dataseries-1-signal') && hasTestAncestorId(confNode,'dataseries'), ...
+confNode = findTestById(docTagged,'panelA-dataseries-1-signal-fill');
+assert(hasTestParentId(confNode,'panelA-dataseries-1-signal-conf'), 'confidence-band patch not directly under its own conf sub-group');
+assert(hasTestAncestorId(confNode,'panelA-dataseries-1-signal') && hasTestAncestorId(confNode,'panelA-dataseries'), ...
     'confidence-band patch not nested under its own series/top-level dataseries group');
 
-annotationNode = findTestById(docTagged,'annotation-1');
-assert(hasTestParentId(annotationNode,'annotations'), 'annotation-1 not directly under an annotations sub-group');
-assert(hasTestAncestorId(annotationNode,'furniture'), 'annotation-1 not folded into furniture');
+annotationNode = findTestById(docTagged,'panelA-annotation-1');
+assert(hasTestParentId(annotationNode,'panelA-annotations'), 'annotation-1 not directly under an annotations sub-group');
+assert(hasTestAncestorId(annotationNode,'panelA-furniture'), 'annotation-1 not folded into furniture');
 
-swatchNode = findTestById(docTagged,'legend-swatch-1');
-labelNode = findTestById(docTagged,'legend-label-1');
-assert(hasTestParentId(swatchNode,'legend-entry-1') && hasTestParentId(labelNode,'legend-entry-1'), ...
+swatchNode = findTestById(docTagged,'panelA-legend-swatch-1');
+labelNode = findTestById(docTagged,'panelA-legend-label-1');
+assert(hasTestParentId(swatchNode,'panelA-legend-entry-1') && hasTestParentId(labelNode,'panelA-legend-entry-1'), ...
     'legend swatch/label not grouped together under one legend-entry');
-assert(hasTestAncestorId(swatchNode,'legend'), 'legend entry not nested under top-level legend group');
+assert(hasTestAncestorId(swatchNode,'panelA-legend'), 'legend entry not nested under top-level legend group');
 
-boxBg = findTestById(docTagged,'legend-box-bg');
-assert(hasTestParentId(boxBg,'legend-box'), 'legend-box-bg not nested under legend-box subgroup');
+boxBg = findTestById(docTagged,'panelA-legend-box-bg');
+assert(hasTestParentId(boxBg,'panelA-legend-box'), 'legend-box-bg not nested under legend-box subgroup');
 
-gridline1 = findTestById(docTagged,'gridline-1');
-assert(hasTestParentId(gridline1,'gridlines') && hasTestAncestorId(gridline1,'furniture'), ...
+gridline1 = findTestById(docTagged,'panelA-gridline-1');
+assert(hasTestParentId(gridline1,'panelA-gridlines') && hasTestAncestorId(gridline1,'panelA-furniture'), ...
     'gridline-1 not nested under gridlines/furniture');
 
 fprintf('all nesting relationships verified\n');
@@ -175,7 +177,7 @@ fprintf('all nesting relationships verified\n');
 % ("signal" in both, deliberately set that way above) -- the collision is resolved correctly iff
 % they're two distinct elements landing in two different groups (already implied by the nesting
 % checks above, spelled out explicitly here too).
-ylabelNode = findTestById(docTagged,'axis-ylabel');
+ylabelNode = findTestById(docTagged,'panelA-axis-ylabel');
 assert(~ylabelNode.isSameNode(labelNode), 'ylabel and legend-label collapsed onto the same element -- collision not resolved');
 fprintf('ylabel/legend-label "signal" collision correctly resolved to distinct elements\n');
 

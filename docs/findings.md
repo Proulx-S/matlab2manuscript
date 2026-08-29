@@ -378,7 +378,7 @@ hand — it exercises pipeline internals in fine-grained detail and serves as th
 "ground truth" reference `test_run_pillar1.m`'s byte-identical comparison depends on, so collapsing it
 into `runPillar1.m` too would remove that independence.
 
-## The copy step: `runPillar1.m` now normalizes `ax` onto a shared standard canvas (2026-08-29)
+## The copy step: `runPillar1.m` now normalizes `ax` onto a shared standard canvas (2026-08-29, id-prefixing note below SUPERSEDED later the same day -- see "Multi-panel composition" section below)
 
 Seb's own design ask, same day: pillar 2's round-trip will need every panel `runPillar1.m` ever
 produces to live in ONE shared physical coordinate system with the eventual composed multi-panel
@@ -437,6 +437,86 @@ the exported SVG's own declared canvas size; all prior default/keepIntermediates
 behavior re-verified unchanged. `test/test_tiledlayout_support.m` (new, permanent, supersedes the
 scratch validation script) — see the superseded-scope note above.
 
+## Multi-panel composition: id-prefixing in `groupAndTagSvg.m`, and `syncPanel.m`'s sync/insert operation (2026-08-29)
+
+Seb's own design ask, same day as the copy step above: build the piece that actually lets a human
+resize a panel AFTER it's inserted into a composed multi-panel figure (not on the standalone
+single-panel SVG), and feed that back into MATLAB for regeneration. Two parts.
+
+**Id-prefixing (`groupAndTagSvg.m`)**: took a required `panId` argument. Confirmed empirically
+first that this is safe as a BLANKET rewrite -- neither MATLAB's own `-dsvg` export nor
+`bakeTransforms.py` ever emits an `id` attribute of its own (checked directly on a probe SVG at
+every stage: raw export, baked, both empty of ids) -- so there's nothing pre-existing to collide
+with or need to leave alone. At the very end of the function (right before `xmlwrite`), every `id`
+this function already generated gets a `{panId}-` prefix, and the SAME `<g>` MATLAB's own exporter
+already wraps everything in (`getRootGroup.m`) gets `id="{panId}-root"` + `data-panel="{panId}"` set
+on it directly -- reusing that existing wrapper rather than inserting a redundant new one, since by
+construction every one of a panel's top-level semantic groups (furniture/axis-spine/dataseries/
+legend) is already a child of it. `data-role`/`data-group` attribute VALUES are deliberately left
+untouched -- unlike `id`, those are meant to repeat identically across panels (selecting every
+panel's own `axis-spine` at once, e.g., is a real, intended cross-panel operation). This supersedes
+the "DELIBERATELY DEFERRED" note in the copy-step section above.
+
+**`syncPanel.m`**: places a panel into `<figId>.svg` and, on every later call, recovers wherever a
+human moved/resized it and regenerates. First insertion and every later resync are the SAME
+operation -- there's no separate "insert" code path -- because since the copy step (above) already
+puts every panel on one shared physical canvas, a panel's placement inside the composed document and
+its own `ax.InnerPosition` are the same number, just expressed as absolute points vs. a
+canvas-relative fraction. Recovering an edit is therefore a DIRECT measurement (this panel's tagged
+`{panId}-axis-spine-x`/`-y`'s current bounding box, divided by canvas size), never a diff against a
+stored "before" value -- confirmed by inverting `identifyAxisSpine.m`'s own
+`InnerPosition -> SVG box` formula and checking it reproduces a known `InnerPosition=[0.15 0.15 0.7
+0.7]` from a real tagged file's own spine coordinates before writing any code (recovered
+`[0.14985 0.15037 0.70092 0.69952]` -- within the same rounding budget already documented elsewhere
+in this file).
+
+**Two risk checks done before committing to this design** (Seb's own explicit ask, since both were
+load-bearing assumptions):
+1. **Does `bakeTransforms.py` generalize to a post-insertion human edit's transform syntax?** No --
+   confirmed by inspection, not assumed: its `parse_transform` uses `MATRIX_RE.fullmatch`, which
+   ONLY accepts `matrix(a,b,c,d,e,f)` and raises `ValueError` on anything else. That's correct FOR
+   ITS OWN JOB (MATLAB's own `-dsvg` exporter only ever emits that one form) but wrong for a
+   composed SVG a human may have re-saved from a vector editor, which can add compound
+   `translate(...) scale(...)`-style transform-lists. Built a SEPARATE, general resolver instead
+   (`resolveElementCTM.m`) rather than stretching `bakeTransforms.py` to a job it wasn't designed
+   for -- it walks a node's ancestor chain and composes every `matrix()`/`translate()`/`scale()`/
+   `rotate()` transform-list found (no `skewX`/`skewY`, same stance `bakeTransforms.py` already
+   takes on shear, for the same reason: this repo's own geometry never needs it).
+2. **Does `ax.InnerPosition` really correspond 1:1 to the tagged spine's own box?** Yes -- this was
+   already implied by `identifyAxisSpine.m`'s own deterministic forward formula (`expectedBoxPt`
+   computed directly from `ax.InnerPosition`+canvas size, no other unknowns), and confirmed the
+   inverse numerically against a real file, see above.
+
+**A real, unrelated bug surfaced writing the test for this (`test/test_sync_panel.m`)**:
+`javax.xml.transform.Transformer.transform(DOMSource(node), ...)`, used to try to serialize JUST one
+DOM node (to byte-compare one panel's subtree before/after an unrelated panel's resync), does NOT do
+that in this MATLAB/Java environment -- confirmed with a minimal repro (two sibling `<g>` elements,
+`DOMSource` given the SECOND one) that it serializes the node's entire OWNER DOCUMENT regardless of
+which node was passed as the source, silently producing a passing-looking (both "before"/"after"
+snapshots equally wrong) but meaningless comparison. Fixed by using DOM Level 3
+`LSSerializer.writeToString(node)` instead, which IS correctly scoped to just the given node --
+confirmed via the same minimal repro. Flagged here since it's a genuinely surprising, easy-to-not-notice
+gotcha, not specific to this repo's own code, that could resurface anywhere else a single-node
+(rather than whole-document) XML serialization is needed.
+
+**Validated** (`test/test_sync_panel.m`): first-time insertion lands at
+`opts.defaultInnerPosition`; a no-op resync (nothing edited) recovers ~the same `InnerPosition`
+within the same rounding tolerance noted above; a resync after a SIMULATED edit (a hand-added
+`translate(...) scale(...)` wrapper, including an aspect-ratio-changing anisotropic scale) recovers
+an analytically-predicted `InnerPosition` to within 0.005 -- not just "didn't error"; two panels
+sharing one composed file produce no duplicate ids and resyncing one leaves the other's own subtree
+byte-identical; a simulated rotation is detected (`{panId}-axis-spine-x`/`-y` no longer
+axis-aligned) and rejected with a clear `syncPanel:rotatedPanel` error rather than silently
+mishandled.
+
+**Known, explicitly flagged validation gap, NOT yet closed**: everything above is exercised against
+SIMULATED edits (this repo's own test directly rewriting the composed SVG's DOM between two
+`syncPanel` calls to stand in for a human's edit) -- this has NOT yet been round-tripped through a
+real external vector editor (Illustrator/Inkscape). Simulated edits cover the transform-list forms
+anticipated above, but an editor's actual save behavior (exact transform-list syntax emitted,
+whether/how it bakes transforms away, whitespace/precision conventions) could differ in ways a
+simulation doesn't catch. This is the next thing to close before trusting this loop end to end.
+
 ## Not yet investigated / open
 
 - The `ScreenPixelsPerInch`-dependent bug documented in the OLD `humanMouse` engine
@@ -457,22 +537,14 @@ scratch validation script) — see the superseded-scope note above.
   was measured). Its font-size IS now corrected (RESOLVED 2026-08-29, see this file's own "Font-size
   rounding" section above) whenever exactly one still-live ad hoc `text()` object shares its exact
   content; `stats.nAnnotationFontSizeUnresolved` tracks the (rare, non-silent) case where it isn't.
-- `TiledChartLayout`-hosted axes (i.e. `plotVessels.m` and anything like it) are explicitly out of
-  scope -- see this file's own note above. Adapting an arbitrary MATLAB figure (tiled or not) down
-  to a plain single-axes figure suitable for this pipeline is its own, later, independent step.
-- Pillar 2 (the mm-based resize round-trip itself: harvest a human's edited spine geometry from the
-  tagged SVG, feed it back into MATLAB via `ax.InnerPosition`, regenerate, re-place) is not yet
-  built -- the mechanism it depends on (`PositionConstraint='innerposition'`) is confirmed working,
-  but no code exists yet to actually do the harvest/feedback/regenerate loop.
-- **`id` collisions across multiple panels in one composed manuscript figure, NOT yet handled.**
-  Every panel `groupAndTagSvg.m` tags uses the SAME fixed id scheme (`axis-spine`,
-  `dataseries-1-<slug>-line`, `legend-box-bg`, etc.) -- inserting two tagged panels into one
-  composed SVG (the eventual output of pillar 2's own panel-insertion step) means duplicate ids in
-  one document, which is invalid SVG and makes `id`-based lookup undefined (typically first-match-
-  wins, silently wrong for every panel after the first). `data-role`/`data-group` values are NOT
-  the problem -- those are MEANT to repeat across panels (e.g. selecting every panel's own
-  `axis-spine` at once is a real, useful multi-panel operation). The fix belongs in the
-  panel-insertion step itself, not in `groupAndTagSvg.m`: when a panel is inserted into a composed
-  figure, wrap it in its own container and rewrite every descendant `id` with a panel-unique prefix
-  (e.g. `panelA-axis-spine-x`), leaving `data-role`/`data-group` untouched. Not yet designed or
-  built -- flagged here so it isn't rediscovered the hard way once pillar 2 starts.
+- `TiledChartLayout`-hosted axes (i.e. `plotVessels.m` and anything like it) -- RESOLVED 2026-08-29,
+  see "The copy step" section above: `runPillar1.m`'s `copyobj`-based copy detaches cleanly from a
+  `TiledChartLayout` parent, confirmed via `test/test_tiledlayout_support.m`.
+- Pillar 2 (the round-trip: harvest wherever a human repositioned/resized a panel after inserting it
+  into a composed multi-panel figure, feed back into MATLAB, regenerate, re-place) -- BUILT
+  2026-08-29 as `syncPanel.m`, see "Multi-panel composition" section above. Still open: a real
+  external-vector-editor round-trip has not been exercised, only simulated edits (see that section's
+  own explicitly-flagged validation gap).
+- `id` collisions across multiple panels in one composed manuscript figure -- RESOLVED 2026-08-29,
+  see "Multi-panel composition" section above: `groupAndTagSvg.m` now takes a required `panId` and
+  prefixes every id it generates with it.

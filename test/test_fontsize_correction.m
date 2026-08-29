@@ -66,23 +66,23 @@ identityBakedFile = fullfile(outDir,'fontsize_identity_baked.svg');
 system(sprintf('python3 %s %s %s', fullfile(repoDir,'bakeTransforms.py'), identityRawFile, identityBakedFile));
 
 taggedFile = fullfile(outDir,'fontsize_tagged.svg');
-stats = groupAndTagSvg(ax, snap, bakedFile, taggedFile, identityBakedFile);
+stats = groupAndTagSvg(ax, snap, bakedFile, taggedFile, 'panelFS', identityBakedFile);
 close(fig);
 
 fprintf('stats.nAnnotationFontSizeUnresolved = %d (expect 0)\n', stats.nAnnotationFontSizeUnresolved);
 assert(stats.nAnnotationFontSizeUnresolved == 0, 'the "panel A" annotation font-size should have resolved cleanly (unique content)');
 
 docTagged = xmlread(taggedFile);
-checkFontSize(docTagged, 'axis-xlabel', 16, 'xlabel');
-checkFontSize(docTagged, 'axis-ylabel', 22, 'ylabel (rotated -- also confirms font-size correction does not disturb the separately-baked rotate() transform)');
-checkFontSize(docTagged, 'axis-ticklabel-x-1', 9, 'x tick label');
-checkFontSize(docTagged, 'axis-ticklabel-y-1', 11, 'y tick label');
-checkFontSize(docTagged, 'legend-label-1', 13, 'legend label');
-checkFontSize(docTagged, 'annotation-1', 18, 'ad hoc annotation');
+checkFontSize(docTagged, 'panelFS-axis-xlabel', 16, 'xlabel');
+checkFontSize(docTagged, 'panelFS-axis-ylabel', 22, 'ylabel (rotated -- also confirms font-size correction does not disturb the separately-baked rotate() transform)');
+checkFontSize(docTagged, 'panelFS-axis-ticklabel-x-1', 9, 'x tick label');
+checkFontSize(docTagged, 'panelFS-axis-ticklabel-y-1', 11, 'y tick label');
+checkFontSize(docTagged, 'panelFS-legend-label-1', 13, 'legend label');
+checkFontSize(docTagged, 'panelFS-annotation-1', 18, 'ad hoc annotation');
 
 % The rotation itself must still be intact -- font-size correction runs on the ALREADY-baked SVG,
 % touching only the font-size attribute, never the separately-baked rotate() transform.
-ylabelNode = findTestById(docTagged, 'axis-ylabel');
+ylabelNode = findTestById(docTagged, 'panelFS-axis-ylabel');
 transformAttr = char(ylabelNode.getAttribute('transform'));
 assert(contains(transformAttr, 'rotate'), 'y-axis label lost its rotate() transform after font-size correction');
 fprintf('y-axis label rotation preserved: %s\n', transformAttr);
