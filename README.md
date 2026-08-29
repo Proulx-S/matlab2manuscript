@@ -46,12 +46,26 @@ this pipeline is its own, later, independent step, out of scope until then.
   vessel-ID corner label) aren't covered yet — those fall back to the scaled-and-rounded value.
   Extend this registry (or get explicit sign-off that a given case is fine to leave) before
   treating font-size handling as done.
-- `snapshotAxesStyle.m` / `matchGraphicsToSvg.m` — the style-fingerprint matcher: captures each
-  live Line/Patch's color/style "recipe" before export, then matches it to its SVG counterpart by
-  exact color (a byte-exact round-trip, confirmed empirically), with a point-count check as a
-  loud (never silent) tie-breaker/failure signal. Validated on `humanMouse`'s real single-metric
-  `plotVessels` panel. Also exposes the matched Java DOM node itself (not just its points), for
-  `groupAndTagSvg.m` below to tag directly.
+- `snapshotAxesStyle.m` / `matchGraphicsToSvg.m` / `dumpIdentitySvg.m` / `identityColorHex.m` — the
+  data-series matcher, with two strategies:
+  1. **Real-color fingerprint** (the original approach): captures each live Line/Patch's color/style
+     "recipe" before export, then matches it to its SVG counterpart by exact color, with a
+     point-count check as a loud (never silent) tie-breaker/failure signal. Genuinely unresolvable
+     when two objects share BOTH the same real color AND the same point count (confirmed real, see
+     `test_edge_cases.m` Case B) — errors loudly rather than guessing.
+  2. **Identity-color cross-reference** (2026-08-29, `groupAndTagSvg.m`'s own default): resolves
+     that ambiguity outright. `dumpIdentitySvg.m` exports a throwaway copy of the figure with every
+     object temporarily given a unique, collision-proof "identity color" (`identityColorHex.m`:
+     index *i* → `#000000+i`), real colors restored before returning. `matchGraphicsToSvg.m` then
+     finds each object's shape in that identity export by its unique color (never ambiguous by
+     construction), and cross-references it into the REAL export by matching its exact geometry
+     (identical between the two exports, since only color differs) — so the real SVG's own colors
+     never need to be unique at all. See `test_edge_cases.m` Case D and `docs/findings.md`.
+
+  Both strategies also expose the matched Java DOM node itself (not just its points), for
+  `groupAndTagSvg.m` below to tag directly. Validated on `humanMouse`'s real single-metric
+  `plotVessels` panel (matching only — this doesn't touch `identifyAxisSpine.m`, so `plotVessels.m`'s
+  `TiledChartLayout` issue doesn't apply here).
 - `identifyAxisSpine.m` — locates the spine's own SVG elements (the long axis-line polyline for
   each ruler) and its tick marks, GEOMETRICALLY, from `ax.InnerPosition`/figure size -- never by
   color/z-order, since spine/gridlines/axes-background routinely share the same palette. Guards
@@ -134,7 +148,8 @@ this pipeline is its own, later, independent step, out of scope until then.
 
 Pillar 1 (grouping/tagging) has a working end-to-end pipeline (`groupAndTagSvg.m`), validated
 against a plain, hand-built single-axes panel (see Scope discipline above — NOT `plotVessels.m`,
-since it always hosts its axes inside a `TiledChartLayout`): bake → match data series (+ legend
+since it always hosts its axes inside a `TiledChartLayout`): bake → dump+bake an identity-colored
+export (`dumpIdentitySvg.m`) → match data series by identity-color cross-reference (+ legend
 swatch/label) → identify axis spine/ticks → identify legend box → identify furniture
 (background/gridlines) → restructure into real nested `<g id=... data-role=...>` groups (spec:
 `docs/grouping-hierarchy.csv`), verified pixel-identical to the un-grouped baked file. Known,

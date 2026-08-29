@@ -1,23 +1,34 @@
-function matches = matchGraphicsToSvg(snap, svgFile)
+function matches = matchGraphicsToSvg(snap, svgFile, identitySvgFile)
 % matchGraphicsToSvg  Match each snapshotAxesStyle.m entry to its corresponding SVG element(s) in
-% svgFile, by exact style fingerprint (stroke/fill hex, first) with a point-count tie-break for
-% genuinely ambiguous cases (documented, not silently guessed). Prototype scope: polyline (Line)
-% and path/polygon (Patch fill) candidates only -- the primitive types the simplest real case
-% (plotVessels single-metric line panel) actually produces.
+% svgFile. Two matching strategies:
 %
-% Errors loudly (never silently guesses) on: zero candidates for a non-empty-style snapshot entry,
-% or more than one candidate surviving both the color AND point-count filters (ambiguousMatch) --
-% same "loud, not silent" discipline the prior engine's matchManuscriptFigureGeometricElement.m
-% established, kept here since it proved the right call.
+% (1) REAL-COLOR fingerprint (used when identitySvgFile is omitted, the original strategy): exact
+%     style fingerprint (stroke/fill hex) with a point-count tie-break for genuinely ambiguous cases.
+%     Errors loudly (never silently guesses) on: zero candidates for a non-empty-style snapshot
+%     entry, or more than one candidate surviving both the color AND point-count filters
+%     (ambiguousMatch) -- e.g. two Lines that happen to share both the same real color AND the same
+%     point count are genuinely unresolvable this way (confirmed real -- see test_edge_cases.m Case
+%     B) -- same "loud, not silent" discipline the prior engine's
+%     matchManuscriptFigureGeometricElement.m established, kept here since it proved the right call.
+%
+% (2) IDENTITY-COLOR cross-reference (used when identitySvgFile IS given -- see dumpIdentitySvg.m):
+%     look up each object's own shape in a THROWAWAY identity-colored export by its unique,
+%     collision-proof identity color (identityColorHex.m), then find the shape with that EXACT SAME
+%     geometry in the real svgFile (geometry is identical between the two exports since only color
+%     differs) -- so the real SVG's own colors never need to be unique at all. This is strictly more
+%     robust than (1): it resolves the Case B ambiguity above outright, since identity colors can
+%     never collide by construction. `groupAndTagSvg.m` always uses this path; (1) is kept only for
+%     backward compatibility / standalone use without an identity export.
 %
 % matches(i): svgTag ('polyline'|'path'), points (Nx2, SVG-space), node (the matched Java DOM
 % element itself -- kept live against the SAME doc used to build these matches, so a caller doing
 % further DOM surgery, e.g. groupAndTagSvg.m's tagging pass, can setAttribute() on it directly
 % instead of re-deriving it from points/geometry), candidateCountBeforeTiebreak.
 %
-% Accepts either a file path (opens its own xmlread doc) or an already-open org.w3c.dom.Document --
-% pass the latter when a caller (groupAndTagSvg.m) needs matches(i).node to stay valid against a doc
-% it will go on to mutate and serialize itself.
+% Accepts either a file path (opens its own xmlread doc) or an already-open org.w3c.dom.Document for
+% BOTH svgFile and identitySvgFile -- pass an already-open doc for svgFile when a caller
+% (groupAndTagSvg.m) needs matches(i).node to stay valid against a doc it will go on to mutate and
+% serialize itself.
 
 if ischar(svgFile) || isstring(svgFile)
     doc = xmlread(svgFile);
@@ -27,6 +38,17 @@ end
 polylines = doc.getElementsByTagName('polyline');
 paths = doc.getElementsByTagName('path');
 
+useIdentity = nargin >= 3 && ~isempty(identitySvgFile);
+if useIdentity
+    if ischar(identitySvgFile) || isstring(identitySvgFile)
+        identityDoc = xmlread(identitySvgFile);
+    else
+        identityDoc = identitySvgFile;
+    end
+    identityPolylines = identityDoc.getElementsByTagName('polyline');
+    identityPaths = identityDoc.getElementsByTagName('path');
+end
+
 matches = repmat(struct('svgTag','', 'points',[], 'node',[], 'candidateCountBeforeTiebreak',0), numel(snap), 1);
 
 for i = 1:numel(snap)
@@ -35,7 +57,6 @@ for i = 1:numel(snap)
         if isempty(s.hex)
             continue   % no visible stroke -- nothing to match (e.g. a hidden helper line)
         end
-        cands = findByStrokeHex(polylines, s.hex);
         matches(i).svgTag = 'polyline';
     else
         % Patch: prefer fill hex (this project's own CI-band/patch usage is always a filled
@@ -49,8 +70,62 @@ for i = 1:numel(snap)
         if isempty(targetHex)
             continue
         end
-        cands = findByFillOrStrokeHex(paths, targetHex, isFillMatch);
         matches(i).svgTag = 'path';
+    end
+
+    if useIdentity
+        idHex = identityColorHex(i);
+        if strcmp(s.type,'line')
+            idCands = findByStrokeHex(identityPolylines, idHex);
+        else
+            idCands = findByFillOrStrokeHex(identityPaths, idHex, isFillMatch);
+        end
+        matches(i).candidateCountBeforeTiebreak = numel(idCands);
+        assert(~isempty(idCands), 'matchGraphicsToSvg:noMatch', ...
+            'object %d (type=%s, displayName=%s): no identity-svg %s candidate with identity color %s found.', ...
+            i, s.type, s.displayName, matches(i).svgTag, idHex);
+
+        % Unlike the real-color path, MORE THAN ONE identity-color candidate can ONLY mean this
+        % object's own shape was split into multiple fragments (an axis-clip-boundary split --
+        % confirmed real, see test_edge_cases.m Case C) -- identity colors are unique per OBJECT by
+        % construction, so a second candidate can never belong to a DIFFERENT object the way a real-
+        % color collision could. Point-count tie-break still applies (fragment reassembly remains a
+        % deliberate, documented non-goal -- see below).
+        if numel(idCands) > 1
+            idCands = filterByPointCount(idCands, s.nPts, matches(i).svgTag);
+        end
+        assert(numel(idCands) == 1, 'matchGraphicsToSvg:ambiguousMatch', ...
+            ['object %d (type=%s, displayName=%s): %d identity-colored candidates found -- this can ' ...
+             'only mean an axis-clip-boundary split (identity colors can''t collide across objects), ' ...
+             'and point-count tie-break could not resolve which fragment is the whole curve.'], ...
+            i, s.type, s.displayName, numel(idCands));
+
+        targetPts = parseGeometry(idCands{1}, matches(i).svgTag);
+        assert(size(targetPts,1) == s.nPts, 'matchGraphicsToSvg:unmatchedPointCount', ...
+            ['object %d (type=%s, displayName=%s): the identity-matched %s has %d point(s), live data ' ...
+             'has %d -- likely an axis-clip-boundary split; refusing to return a partial match.'], ...
+            i, s.type, s.displayName, matches(i).svgTag, size(targetPts,1), s.nPts);
+
+        % Cross-reference into the REAL svg by geometry -- identical between the two exports since
+        % only color differs, so the real svg's own colors are never consulted here at all.
+        if strcmp(matches(i).svgTag,'polyline'); realNodeList = polylines; else; realNodeList = paths; end
+        realCands = findByGeometry(realNodeList, matches(i).svgTag, targetPts);
+        assert(~isempty(realCands), 'matchGraphicsToSvg:noGeometryMatch', ...
+            'object %d (type=%s, displayName=%s): identity-matched geometry not found in the real SVG -- did the two exports diverge?', ...
+            i, s.type, s.displayName);
+        assert(numel(realCands) == 1, 'matchGraphicsToSvg:ambiguousGeometryMatch', ...
+            'object %d (type=%s, displayName=%s): %d shapes in the real SVG share the identity-matched geometry exactly -- cannot disambiguate.', ...
+            i, s.type, s.displayName, numel(realCands));
+        matches(i).node = realCands{1};
+        matches(i).points = targetPts;
+        continue
+    end
+
+    % --- real-color fingerprint path (no identity SVG supplied) ---
+    if strcmp(s.type,'line')
+        cands = findByStrokeHex(polylines, s.hex);
+    else
+        cands = findByFillOrStrokeHex(paths, targetHex, isFillMatch);
     end
 
     matches(i).candidateCountBeforeTiebreak = numel(cands);
@@ -105,6 +180,17 @@ for k = 0:nodeList.getLength()-1
     node = nodeList.item(k);
     val = attrOrParent(node, attrName);
     if strcmpi(val, hex)
+        cands{end+1} = node; %#ok<AGROW>
+    end
+end
+end
+
+function cands = findByGeometry(nodeList, svgTag, targetPts)
+cands = {};
+for k = 0:nodeList.getLength()-1
+    node = nodeList.item(k);
+    pts = parseGeometry(node, svgTag);
+    if isequal(size(pts), size(targetPts)) && all(abs(pts(:) - targetPts(:)) < 1e-6)
         cands{end+1} = node; %#ok<AGROW>
     end
 end

@@ -60,8 +60,16 @@ print(fig, rawFile, '-dsvg','-vector');
 bakedFile = fullfile(outDir,'group_tag_baked.svg');
 system(sprintf('python3 %s %s %s', fullfile(repoDir,'bakeTransforms.py'), rawFile, bakedFile));
 
+% Identity-colored export (dumpIdentitySvg.m) + bake -- used for robust, collision-proof data-series
+% matching (matchGraphicsToSvg.m's identity-color cross-reference path) instead of real-color
+% fingerprinting. No font registry needed here: only geometry/color matter for this throwaway file.
+identityRawFile = fullfile(outDir,'group_tag_identity_raw.svg');
+dumpIdentitySvg(fig, snap, identityRawFile);
+identityBakedFile = fullfile(outDir,'group_tag_identity_baked.svg');
+system(sprintf('python3 %s %s %s', fullfile(repoDir,'bakeTransforms.py'), identityRawFile, identityBakedFile));
+
 taggedFile = fullfile(outDir,'group_tag_tagged.svg');
-stats = groupAndTagSvg(ax, snap, bakedFile, taggedFile);
+stats = groupAndTagSvg(ax, snap, bakedFile, taggedFile, identityBakedFile);
 close(fig);   % safe to close now -- groupAndTagSvg only needed the live ax/fig up to this point
 
 fprintf('stats: nDataSeries=%d nLegendEntries=%d nXTicks=%d nYTicks=%d nAxisLabels=%d nFurnitureGridlines=%d nAnnotations=%d\n', ...

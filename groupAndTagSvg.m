@@ -1,4 +1,4 @@
-function stats = groupAndTagSvg(ax, snap, bakedSvgFile, taggedSvgFile)
+function stats = groupAndTagSvg(ax, snap, bakedSvgFile, taggedSvgFile, identityBakedSvgFile)
 % groupAndTagSvg  The grouping/tagging half of this repo's round-trip pipeline (README pillar 1):
 % restructures an ALREADY-BAKED svg's DOM into real nested <g> containers -- full current hierarchy
 % in docs/grouping-hierarchy.csv (an editable outline; edit it to propose a change). Four top-level
@@ -30,6 +30,14 @@ function stats = groupAndTagSvg(ax, snap, bakedSvgFile, taggedSvgFile)
 % snap           snapshotAxesStyle(ax), captured BEFORE export/close
 % bakedSvgFile   path to the baked (bakeTransforms.py) SVG -- absolute coordinates required
 % taggedSvgFile  output path (written via xmlwrite)
+% identityBakedSvgFile  (optional) a baked (bakeTransforms.py) export of dumpIdentitySvg.m's own
+%                identity-colored copy of the SAME figure/snap -- when given, data-series matching
+%                uses identity-color cross-referencing (matchGraphicsToSvg.m) instead of real-color
+%                fingerprinting, resolving the "two objects share a color and point count" ambiguity
+%                that's otherwise genuinely unresolvable (see test_edge_cases.m Case B/D). Omit only
+%                for quick/standalone use where that ambiguity isn't a concern -- the caller is
+%                responsible for producing this file (dumpIdentitySvg.m + bake), mirroring how this
+%                function never bakes bakedSvgFile itself either.
 %
 % stats: struct of counts (nDataSeries, nLegendEntries, nXTicks, nYTicks, nAxisLabels,
 % nFurnitureGridlines, nAnnotations) so a caller can sanity-check nothing was silently skipped.
@@ -46,7 +54,11 @@ root = getRootGroup(doc);
 % --- identification only below (read-only queries against the still-untouched doc; every node
 % reference collected here stays valid after later mutation -- Java DOM objects don't invalidate
 % when detached, only their position changes) ---
-matches = matchGraphicsToSvg(snap, doc);
+if nargin >= 5 && ~isempty(identityBakedSvgFile)
+    matches = matchGraphicsToSvg(snap, doc, identityBakedSvgFile);
+else
+    matches = matchGraphicsToSvg(snap, doc);
+end
 spineInfo = identifyAxisSpine(ax, doc, canvasSizePt);
 legInfo = identifyLegend(ax, snap, doc, spineInfo.expectedBoxPt, canvasSizePt);
 xLabelNodes = matchTickLabels(doc, ax.XAxis.TickLabels, spineInfo.xTickNodes, 'x', spineInfo.expectedBoxPt);

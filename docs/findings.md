@@ -221,6 +221,48 @@ hand-built `axes()` instead of `plotVessels.m` for anything touching `identifyAx
 registry tests (`test_match_prototype.m`/`test_edge_cases.m`/`test_registry_rotation.m`), which
 don't touch axis-spine identification and aren't affected by this.
 
+## Identity-color matching: resolving the "two objects share a color" ambiguity (2026-08-29)
+
+The real-color style-fingerprint matcher (`matchGraphicsToSvg.m`, `docs` above) has one genuine,
+unresolvable-by-design gap: if two Line/Patch objects share BOTH the same real color AND the same
+point count, nothing in the SVG distinguishes them — confirmed real, `test_edge_cases.m` Case B,
+correctly errors loudly (`ambiguousMatch`) rather than guessing. Seb's own proposal, discussed before
+building it: render a second, disposable copy of the same figure where every object gets a unique,
+deliberately-arbitrary "identity color" instead of its real one (the "ID buffer"/"color picking"
+technique from graphics engines: render a hidden pass with flat unique colors per object so a color
+read-back always identifies the object unambiguously, no matter its real appearance) — then use that
+disposable export purely as a lookup key into the real one.
+
+**Why this works cleanly for SVG specifically** (unlike the rasterized-image version of this
+technique): SVG `fill`/`stroke` attribute values are exact text in the markup, never blended/
+rasterized, so there is no antialiasing risk the way there would be reading back pixels from a
+rendered image — adjacent identity values like `#000001`/`#000002` are exactly as reliable as
+maximally-different colors would be.
+
+**Implementation**: `identityColorHex.m` is the single shared encoding (index *i* → `#000000+i`,
+both a hex string and a `[0,1]` RGB triple) that `dumpIdentitySvg.m` (assigns colors, exports,
+restores real colors) and `matchGraphicsToSvg.m` (looks them up) both rely on to agree. Colors are
+restored via an explicit try/catch around the whole recolor+export sequence, not `onCleanup` — an
+`onCleanup` closure captures its captured variables' VALUES at creation time, so creating it before
+the loop that populates the restore-function list would have captured an eternally-empty list (a
+real bug caught before it shipped, not hypothetical).
+
+`matchGraphicsToSvg.m`'s new identity path: for object *i*, find the identity-colored export's own
+shape by EXACT color `identityColorHex(i)` (unambiguous by construction — unlike the real-color path,
+more than one candidate here can only mean the SAME object's shape was split by an axis-clip boundary,
+never a different object, since identity colors never collide), then find the shape with that EXACT
+SAME geometry in the real export (identical between the two exports, since only color differs) — so
+the real SVG's own colors are never consulted for this at all. Validated: `test_edge_cases.m` Case D
+reproduces Case B's exact "same color, same point count" scenario and confirms it resolves correctly
+with an identity SVG present, where Case B itself (no identity SVG) still correctly errors loudly —
+both paths coexist, `identitySvgFile` is an optional third argument, so the original,
+already-validated real-color-only behavior is unchanged when it's omitted. `groupAndTagSvg.m` now
+always supplies one.
+
+**Scope note**: this fixes SVG-identity-matching robustness, not the SEPARATE Line+Patch
+DisplayName-based series-pairing question (still open, see below) — identity colors tell you
+"this exact shape is object *i*," not "object *i* and object *j* are the same logical series."
+
 ## Not yet investigated / open
 
 - The `ScreenPixelsPerInch`-dependent bug documented in the OLD `humanMouse` engine

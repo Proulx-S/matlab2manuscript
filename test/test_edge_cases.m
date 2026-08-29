@@ -54,6 +54,30 @@ catch e
     fprintf('Case C (axis-clip split): threw %s -- %s\n', e.identifier, e.message);
 end
 
+% Case D: the EXACT same "two lines, same color, same nPts" scenario as Case B -- but now WITH an
+% identity SVG (dumpIdentitySvg.m). Unlike Case B, this must NOT error: identity colors are unique
+% per object by construction, so the ambiguity that's genuinely unresolvable via real color alone
+% disappears entirely once identity-color cross-referencing is used.
+fig = figure('Visible','off'); ax = axes(fig); hold(ax,'on');
+plot(ax, 1:10, sin(1:10), 'Color',[0.7 0.2 0.4], 'LineWidth',2);
+plot(ax, 1:10, cos(1:10), 'Color',[0.7 0.2 0.4], 'LineWidth',2);
+snap = snapshotAxesStyle(ax);
+yd1 = snap(1).handle.YData; yd2 = snap(2).handle.YData;
+svgFile = fullfile(outDir,'edgeD_real.svg');
+print(fig, svgFile, '-dsvg', '-vector');
+idSvgFile = fullfile(outDir,'edgeD_identity.svg');
+dumpIdentitySvg(fig, snap, idSvgFile);
+origColor1 = snap(1).handle.Color; origColor2 = snap(2).handle.Color;
+close(fig);
+assert(isequal(origColor1,[0.7 0.2 0.4]) && isequal(origColor2,[0.7 0.2 0.4]), ...
+    'Case D: dumpIdentitySvg.m did not correctly restore real colors after export');
+matches = matchGraphicsToSvg(snap, svgFile, idSvgFile);
+r1 = corrcoef(yd1(:), matches(1).points(:,2));
+r2 = corrcoef(yd2(:), matches(2).points(:,2));
+assert(r1(1,2) < -0.9 && r2(1,2) < -0.9, ...
+    'Case D: identity-based matching did not correctly disambiguate the two same-color, same-nPts lines');
+fprintf('Case D (same color, same nPts, WITH identity SVG): PASS -- correctly resolved, no ambiguousMatch error\n');
+
 function s = tern(cond,a,b)
 if cond; s=a; else; s=b; end
 end

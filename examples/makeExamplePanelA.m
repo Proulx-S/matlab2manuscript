@@ -5,6 +5,11 @@
 %   panelA.svg            bakeTransforms.py output -- transforms flattened into plain attributes
 %   panelA_tagged.svg     groupAndTagSvg.m output -- real nested <g id=.../data-role=...> groups
 %
+% Also writes panelA_identity_raw.svg/panelA_identity.svg -- dumpIdentitySvg.m's own throwaway,
+% identity-colored export (+ its own bake) used internally for robust data-series matching (see
+% matchGraphicsToSvg.m). Not one of the four artifacts above; kept on disk only for inspecting the
+% matching mechanism itself, never meant to be a real deliverable.
+%
 % Deliberately a hand-built plain axes, NOT plotVessels.m (2026-08-29 policy change, see
 % docs/findings.md): plotVessels.m always hosts its axes inside a TiledChartLayout (even for one
 % panel), and this repo has decided not to accommodate that for now -- adapting an arbitrary MATLAB
@@ -65,8 +70,15 @@ print(fig, rawFile, '-dsvg','-vector');
 bakedFile = fullfile(outDir,'panelA.svg');
 system(sprintf('python3 %s %s %s', fullfile(fileparts(repoDir),'bakeTransforms.py'), rawFile, bakedFile));
 
+% Identity-colored export (dumpIdentitySvg.m) + bake -- robust, collision-proof data-series matching
+% (see matchGraphicsToSvg.m/docs/findings.md) instead of real-color fingerprinting.
+identityRawFile = fullfile(outDir,'panelA_identity_raw.svg');
+dumpIdentitySvg(fig, snap, identityRawFile);
+identityBakedFile = fullfile(outDir,'panelA_identity.svg');
+system(sprintf('python3 %s %s %s', fullfile(fileparts(repoDir),'bakeTransforms.py'), identityRawFile, identityBakedFile));
+
 taggedFile = fullfile(outDir,'panelA_tagged.svg');
-stats = groupAndTagSvg(ax, snap, bakedFile, taggedFile); %#ok<NASGU>
+stats = groupAndTagSvg(ax, snap, bakedFile, taggedFile, identityBakedFile); %#ok<NASGU>
 close(fig);
 
 fprintf('Wrote:\n  %s\n  %s\n  %s\n  %s\n', figFile, rawFile, bakedFile, taggedFile);
