@@ -162,6 +162,29 @@ and post-grouping (tagged) SVGs are rasterized (`rsvg-convert`) and pixel-diffed
 this repo's real validation panel. `test/test_group_tag.m` runs this automatically when both tools
 are on `PATH` (warns and skips, rather than silently passing, if they aren't).
 
+## `plotVessels.m` always hosts its axes in a `TiledChartLayout` — decided out of scope (2026-08-29)
+
+Discovered while regenerating this repo's own example artifacts: `identifyAxisSpine.m` failed
+intermittently against real `plotVessels.m` output, with no apparent pattern. Root cause, confirmed
+by direct inspection: `plotVessels.m` calls `tiledlayout(hFig, nRow, nCol, ...)` + `nexttile`
+unconditionally (`plotVessels.m:1230`/`:1239`), so `class(ax.Parent)` is ALWAYS
+`matlab.graphics.layout.TiledChartLayout`, never a plain figure. This means the validated panel
+described in the two sections just above was, itself, unknowingly a tiled axes -- it happened to
+work often enough not to notice. Two real, confirmed consequences: a tiled axes' `PositionConstraint`
+cannot be set at all (MATLAB rejects the assignment outright, and reading it back afterward is
+cosmetic bookkeeping, not a real pin — tiledlayout's own layout engine controls the actual geometry
+regardless), and live `ax.InnerPosition` can differ from the ACTUAL exported spine geometry by up to
+~1.2pt (an extra layout quantization on top of the already-understood export scale factor).
+
+**Seb's own call, same day**: don't accommodate this. Adapting an arbitrary MATLAB figure (tiled or
+not) down to a plain single-axes figure suitable for this pipeline is its own, later, independent
+step — not something to build reactively into `identifyAxisSpine.m`'s own tolerances. This repo's
+own tests/examples (`test/test_group_tag.m`, `examples/makeExamplePanelA.m`) now use a plain,
+hand-built `axes()` instead of `plotVessels.m` for anything touching `identifyAxisSpine.m`/
+`groupAndTagSvg.m` — `plotVessels.m` is still used for the style-fingerprint matching and font-
+registry tests (`test_match_prototype.m`/`test_edge_cases.m`/`test_registry_rotation.m`), which
+don't touch axis-spine identification and aren't affected by this.
+
 ## Not yet investigated / open
 
 - The `ScreenPixelsPerInch`-dependent bug documented in the OLD `humanMouse` engine
@@ -175,9 +198,14 @@ are on `PATH` (warns and skips, rather than silently passing, if they aren't).
 - Line+error-band pairing into one "series" uses `DisplayName` equality only -- no project
   convention exists yet for a more explicit link (e.g. a shared `Tag` suffix); revisit if/when one
   is established in `humanMouse`.
-- The ad hoc vessel-ID corner label `plotVessels.m` draws via `drawIdCornerBox` is not tagged by
-  `groupAndTagSvg.m` -- same known, deliberately tracked gap `dumpFontRegistry.m` already has for
-  its font-size (neither an axis label, tick label, data series, nor legend entry as defined here).
+- An ad hoc `text()` annotation (e.g. `plotVessels.m`'s own vessel-ID corner label, drawn via
+  `drawIdCornerBox`) is tagged (`id`/`data-role="annotation"`) but deliberately NOT grouped with
+  anything else by `groupAndTagSvg.m` -- see its own "leftover bucket" note above for why. Same
+  known, deliberately tracked gap `dumpFontRegistry.m` already has for its font-size (neither an
+  axis label, tick label, data series, nor legend entry as defined here).
+- `TiledChartLayout`-hosted axes (i.e. `plotVessels.m` and anything like it) are explicitly out of
+  scope -- see this file's own note above. Adapting an arbitrary MATLAB figure (tiled or not) down
+  to a plain single-axes figure suitable for this pipeline is its own, later, independent step.
 - Pillar 2 (the mm-based resize round-trip itself: harvest a human's edited spine geometry from the
   tagged SVG, feed it back into MATLAB via `ax.InnerPosition`, regenerate, re-place) is not yet
   built -- the mechanism it depends on (`PositionConstraint='innerposition'`) is confirmed working,

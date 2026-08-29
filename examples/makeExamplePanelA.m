@@ -1,29 +1,50 @@
 % makeExamplePanelA  Concrete, on-disk example of every artifact this repo's pipeline currently
-% produces for one panel (real plotVessels.m data, legend on), for Seb to inspect directly:
+% produces for one PLAIN single-axes panel, for Seb to inspect directly:
 %   panelA.fig          the original MATLAB figure (savefig)
 %   panelA_raw.svg       straight print(-dsvg) export -- MATLAB's own transform="matrix(...)" intact
 %   panelA.svg            bakeTransforms.py output -- transforms flattened into plain attributes
-%   panelA_tagged.svg     groupAndTagSvg.m output -- id/data-role/data-group stamped on top of the
-%                         baked file (not explicitly asked for by name, generated anyway since it's
-%                         this session's actual deliverable)
+%   panelA_tagged.svg     groupAndTagSvg.m output -- real nested <g id=.../data-role=...> groups
+%
+% Deliberately a hand-built plain axes, NOT plotVessels.m (2026-08-29 policy change, see
+% docs/findings.md): plotVessels.m always hosts its axes inside a TiledChartLayout (even for one
+% panel), and this repo has decided not to accommodate that for now -- adapting an arbitrary MATLAB
+% figure down to a plain single-axes figure suitable for this pipeline is its own, later,
+% independent step. Same synthetic panel used by test/test_group_tag.m.
 %
 % figure1.svg (a composed multi-panel figure with this panel inserted as a layer) is NOT produced --
 % that's pillar 2 (the mm-based resize round-trip / panel-insertion step), not yet built. See
 % docs/findings.md and README.md's Status section.
-workDir = '/scratch/bass/projects/humanMouse';
-addpath(genpath(fullfile(workDir,'vesselFit')));
-addpath(genpath(fullfile(workDir,'humanVessel')));
 repoDir = fileparts(mfilename('fullpath'));
 addpath(fileparts(repoDir));
 outDir = repoDir;
 
-t = (0:0.1:20)';
-vessel = struct();
-vessel.tsImMotionCorrected.gaussVascPhys.radius = 5 + 0.3*sin(2*pi*t/5)' + 0.02*randn(1,numel(t));
-vessel.dt = 0.1;
+fig = figure('Visible','off');
+fig.Units = 'centimeters';
+fig.Position = [2 2 16 10];
+fig.PaperUnits = 'centimeters';
+fig.PaperSize = [16 10];
+fig.PaperPositionMode = 'manual';
+fig.PaperPosition = [0 0 16 10];
 
-fig = plotVessels(vessel, 'tsImMotionCorrected.gaussVascPhys.radius', struct('legendVerbose',1));
-ax = findobj(fig,'Type','axes'); ax = ax(1);
+ax = axes(fig);
+ax.Units = 'normalized';
+ax.PositionConstraint = 'innerposition';
+ax.InnerPosition = [0.15 0.15 0.7 0.7];
+ax.Box = 'off';
+grid(ax, 'on');
+hold(ax, 'on');
+
+x = 0:0.5:20;
+y = 5 + 0.3*sin(2*pi*x/5);
+plot(ax, x, y, 'Color',[0.9 0.7 0.1], 'LineWidth', 2, 'DisplayName', 'signal');
+ax.XLabel.String = 'time (s)';
+ax.YLabel.String = 'signal';   % deliberately the SAME string as the legend's own DisplayName below,
+                                % to keep exercising the real content-collision case this pipeline
+                                % must resolve (confirmed real on plotVessels.m's own "radius" panel)
+legend(ax, 'Location','northeast');   % picks up the Line's own DisplayName='signal' set above
+text(ax, 0.02, 0.95, 'panel A', 'Units','normalized', 'FontWeight','bold');   % ad hoc annotation
+drawnow;
+
 snap = snapshotAxesStyle(ax);
 
 figFile = fullfile(outDir,'panelA.fig');
