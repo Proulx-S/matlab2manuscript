@@ -1,0 +1,34 @@
+id,parent,role,contents,cardinality,notes
+furniture,,furniture,(container only),1,figure/axes background + gridlines; not one of the three roles the plan defines but grouped for a tidy document
+figure-background,furniture,figure-background,figure background rect,1,
+axes-background,furniture,axes-background,axes plot-box background rect,1,
+gridlines,furniture,gridlines,(container only),1,
+gridline-{n},gridlines,gridline,one gridline polyline,1 per major tick (x+y combined),"n is 1-indexed in document order, not paired to a specific tick"
+axis-spine,,axis-spine,(container only),1,
+axis-spine-lines,axis-spine,spine-lines,(container only),1,
+axis-spine-x,axis-spine-lines,spine-line,bottom spine polyline,1,the long polyline spanning ax.InnerPosition's width
+axis-spine-y,axis-spine-lines,spine-line,left spine polyline,1,the long polyline spanning ax.InnerPosition's height
+axis-ticks-x,axis-spine,ticks,(container only),1,data-axis=x
+axis-tick-x-{n},axis-ticks-x,tick,(container only),1 per x tick,n is 1-indexed left to right
+axis-tick-x-{n}-mark,axis-tick-x-{n},tick-mark,tick mark polyline,1,
+axis-ticklabel-x-{n},axis-tick-x-{n},tick-label,tick label text,1,paired to its own tick mark by position order
+axis-ticks-y,axis-spine,ticks,(container only),1,data-axis=y
+axis-tick-y-{n},axis-ticks-y,tick,(container only),1 per y tick,n is 1-indexed bottom to top
+axis-tick-y-{n}-mark,axis-tick-y-{n},tick-mark,tick mark polyline,1,
+axis-ticklabel-y-{n},axis-tick-y-{n},tick-label,tick label text,1,paired to its own tick mark by position order
+axis-labels,axis-spine,axis-labels,(container only),1,
+axis-title,axis-labels,axis-label,title text,0 or 1,only if ax.Title.String is non-empty
+axis-xlabel,axis-labels,axis-label,xlabel text,0 or 1,only if ax.XLabel.String is non-empty
+axis-ylabel,axis-labels,axis-label,ylabel text,0 or 1,only if ax.YLabel.String is non-empty
+dataseries,,dataseries,(container only),0 or 1,only created if at least one Line/Patch matched
+dataseries-{i}-{slug},dataseries,series,(container only),1 per data series,slug is the DisplayName (or series{i} if unset); {i} shared by a Line+Patch pair with the SAME DisplayName
+dataseries-{i}-{slug}-line,dataseries-{i}-{slug},dataseries-line,the Line's own polyline,1 if this series has a Line,
+dataseries-{i}-{slug}-fill,dataseries-{i}-{slug},dataseries-fill,the Patch/error-band path,1 if this series has a same-DisplayName Patch,
+legend,,legend,(container only),0 or 1,only created if a live Legend object exists
+legend-box,legend,legend-box,(container only),1,
+legend-box-bg,legend-box,legend-box-bg,legend background rect,1,
+legend-box-border,legend-box,legend-box-border,legend border rect,1,
+legend-entry-{i},legend,legend-entry,(container only),1 per legend entry,{i} matches the entry's own dataseries-{i} series index
+legend-swatch-{i},legend-entry-{i},legend-swatch,swatch line/patch sample,1,
+legend-label-{i},legend-entry-{i},legend-label,entry text,1,content equals the series' own DisplayName
+(none -- tagged in place),(its own original MATLAB wrapper; NOT relocated),annotation,any leftover/unclaimed element,1 per leftover element,id is annotation-{k} only if the element had no id already; never grouped with other annotations -- see docs/findings.md's own note on why (paint-order risk)
