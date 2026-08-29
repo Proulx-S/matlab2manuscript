@@ -26,7 +26,8 @@ function stats = groupAndTagSvg(ax, snap, bakedSvgFile, taggedSvgFile, identityB
 % docs/findings.md).
 %
 % ax             live axes (NOT yet closed -- ax.Box/.InnerPosition/.Title/.XAxis etc. read live;
-%                Box='off', PositionConstraint='innerposition' required, see identifyAxisSpine.m)
+%                PositionConstraint='innerposition' required; Box='off' or 'on' both supported, see
+%                identifyAxisSpine.m)
 % snap           snapshotAxesStyle(ax), captured BEFORE export/close
 % bakedSvgFile   path to the baked (bakeTransforms.py) SVG -- absolute coordinates required
 % taggedSvgFile  output path (written via xmlwrite)
@@ -40,11 +41,20 @@ function stats = groupAndTagSvg(ax, snap, bakedSvgFile, taggedSvgFile, identityB
 %                function never bakes bakedSvgFile itself either.
 %
 % stats: struct of counts (nDataSeries, nLegendEntries, nXTicks, nYTicks, nAxisLabels,
-% nFurnitureGridlines, nAnnotations) so a caller can sanity-check nothing was silently skipped.
+% nFurnitureGridlines, nAnnotations, nAnnotationFontSizeUnresolved) so a caller can sanity-check
+% nothing was silently skipped. Every text role EXCEPT annotations gets its font-size corrected from
+% a live ax/legend property directly (no content-matching risk at all, since which property to read
+% is already determined by the role itself); an annotation's font-size is corrected by content-
+% matching against the small set of still-live ad hoc text() objects, and nAnnotationFontSizeUnresolved
+% counts how many couldn't be resolved that way (kept at the baked/scaled, slightly-rounded value
+% instead -- see docs/findings.md) rather than silently guessed.
 %
 % Known, deliberately out-of-scope gaps (tracked, not silently accepted -- see docs/findings.md):
-% `ax.Box='on'` not handled (identifyAxisSpine.m errors loudly); multi-legend/multi-axes figures out
-% of scope. (A Line+error-band Patch used to be paired into one series by DisplayName equality only
+% multi-legend/multi-axes figures out of scope. (`ax.Box='on'` used to error loudly rather than be
+% mishandled -- RESOLVED 2026-08-29, see identifyAxisSpine.m: mirrored top/right spine lines and
+% tick marks are now identified and tagged, though MATLAB never draws mirror-side tick LABELS, so
+% there's no mirror counterpart to a tick's own label.) (A Line+error-band Patch used to be paired
+% into one series by DisplayName equality only
 % -- REVISED 2026-08-29, see assignSeriesIndices.m: now uses `Tag`, an explicit, non-display property
 % meant for exactly this, since two unrelated series can legitimately/accidentally share a
 % DisplayName.)
@@ -88,7 +98,11 @@ for li = 1:size(labelDefs,1)
 end
 
 % Catch-all "annotations": anything with real geometry/text that isn't claimed by any role above.
-claimed = [{spineInfo.xSpineNode, spineInfo.ySpineNode}, spineInfo.xTickNodes(:)', spineInfo.yTickNodes(:)', ...
+% xSpineTopNode/ySpineRightNode/xTickMirrorNodes/yTickMirrorNodes are [] / {} unless ax.Box='on'
+% (identifyAxisSpine.m) -- harmless to always include, isNodeInList/earliestOriginalChild both treat
+% an empty entry as a no-op.
+claimed = [{spineInfo.xSpineNode, spineInfo.ySpineNode, spineInfo.xSpineTopNode, spineInfo.ySpineRightNode}, ...
+    spineInfo.xTickNodes(:)', spineInfo.yTickNodes(:)', spineInfo.xTickMirrorNodes(:)', spineInfo.yTickMirrorNodes(:)', ...
     xLabelNodes(:)', yLabelNodes(:)', {axisLabelNode.title, axisLabelNode.xlabel, axisLabelNode.ylabel}, ...
     {furn.figureBgNode, furn.axesBgNode}, furn.gridlineNodes(:)'];
 for i = 1:numel(snap)
@@ -114,7 +128,8 @@ end
 % --- anchors: computed BEFORE any mutation, off the still-original document, so each new group's
 % insertion point reflects whichever of its members occurs earliest in draw order ---
 furnitureMembers = [{furn.figureBgNode, furn.axesBgNode}, furn.gridlineNodes(:)', annotationNodes(:)'];
-spineMembers = [{spineInfo.xSpineNode, spineInfo.ySpineNode}, spineInfo.xTickNodes(:)', spineInfo.yTickNodes(:)', ...
+spineMembers = [{spineInfo.xSpineNode, spineInfo.ySpineNode, spineInfo.xSpineTopNode, spineInfo.ySpineRightNode}, ...
+    spineInfo.xTickNodes(:)', spineInfo.yTickNodes(:)', spineInfo.xTickMirrorNodes(:)', spineInfo.yTickMirrorNodes(:)', ...
     xLabelNodes(:)', yLabelNodes(:)', {axisLabelNode.title, axisLabelNode.xlabel, axisLabelNode.ylabel}];
 dataMembers = {};
 for i = 1:numel(snap)
@@ -135,7 +150,7 @@ anchorData = earliestOriginalChild(root, dataMembers);
 anchorLegend = earliestOriginalChild(root, legendMembers);
 
 stats = struct('nDataSeries',0, 'nLegendEntries',0, 'nXTicks',0, 'nYTicks',0, 'nAxisLabels',0, ...
-    'nFurnitureGridlines',0, 'nAnnotations',0);
+    'nFurnitureGridlines',0, 'nAnnotations',0, 'nAnnotationFontSizeUnresolved',0);
 
 % --- furniture (+ annotations, folded in per Seb's own ask 2026-08-29) ---
 if ~isempty(furn.figureBgNode) || ~isempty(furn.axesBgNode) || ~isempty(furn.gridlineNodes) || ~isempty(annotationNodes)
@@ -170,11 +185,25 @@ if ~isempty(furn.figureBgNode) || ~isempty(furn.axesBgNode) || ~isempty(furn.gri
         % likely break that -- flag it if `test_group_tag.m`'s pixel-diff check ever catches this.
         annG = newGroup(doc, 'annotations', 'annotations');
         furnitureG.appendChild(annG);
+        % Ad hoc text() objects still on the live axes (title/xlabel/ylabel excluded -- those are
+        % already handled by name above, not by this catch-all) -- used to correct an annotation's
+        % font-size the same way every other role's is corrected below, by CONTENT match against a
+        % small, already-narrowed candidate set (mirrors identifyLegend.m's own content-matching
+        % discipline). Left unresolved (baked/scaled fallback value kept, tracked in stats, not
+        % silently guessed) if zero or more than one live text shares that exact content.
+        adHocTextObjs = findall(ax, 'Type', 'text');
+        knownLabelHandles = [ax.Title, ax.XLabel, ax.YLabel];
+        adHocTextObjs = adHocTextObjs(~ismember(adHocTextObjs, knownLabelHandles));
+        stats.nAnnotationFontSizeUnresolved = 0;
         for k = 1:numel(annotationNodes)
-            relocateLeaf(annotationNodes{k}, annG);
-            id = char(annotationNodes{k}.getAttribute('id'));
+            node = annotationNodes{k};
+            relocateLeaf(node, annG);
+            id = char(node.getAttribute('id'));
             if isempty(id); id = sprintf('annotation-%d',k); end
-            tagLeaf(annotationNodes{k}, id, 'annotation');
+            tagLeaf(node, id, 'annotation');
+            if strcmp(char(node.getTagName()), 'text') && ~setAnnotationFontSizeFromLive(node, adHocTextObjs)
+                stats.nAnnotationFontSizeUnresolved = stats.nAnnotationFontSizeUnresolved + 1;
+            end
         end
         stats.nAnnotations = numel(annotationNodes);
     end
@@ -188,6 +217,17 @@ linesG = newGroup(doc, 'axis-spine-lines', 'spine-lines');
 spineG.appendChild(linesG);
 relocateLeaf(spineInfo.xSpineNode, linesG); tagLeaf(spineInfo.xSpineNode, 'axis-spine-x', 'spine-line');
 relocateLeaf(spineInfo.ySpineNode, linesG); tagLeaf(spineInfo.ySpineNode, 'axis-spine-y', 'spine-line');
+% Mirror lines/ticks only exist when ax.Box='on' (identifyAxisSpine.m) -- MATLAB draws a second long
+% line on the opposite side of each ruler, with its own set of tick marks but (confirmed empirically)
+% never its own tick LABELS, so there's no mirror counterpart to xLabelNodes/yLabelNodes below.
+if ~isempty(spineInfo.xSpineTopNode)
+    relocateLeaf(spineInfo.xSpineTopNode, linesG);
+    tagLeaf(spineInfo.xSpineTopNode, 'axis-spine-x-mirror', 'spine-line-mirror');
+end
+if ~isempty(spineInfo.ySpineRightNode)
+    relocateLeaf(spineInfo.ySpineRightNode, linesG);
+    tagLeaf(spineInfo.ySpineRightNode, 'axis-spine-y-mirror', 'spine-line-mirror');
+end
 
 ticksXG = newGroup(doc, 'axis-ticks-x', 'ticks'); ticksXG.setAttribute('data-axis','x');
 spineG.appendChild(ticksXG);
@@ -199,9 +239,18 @@ for k = 1:numel(spineInfo.xTickNodes)
     if k <= numel(xLabelNodes) && ~isempty(xLabelNodes{k})
         relocateLeaf(xLabelNodes{k}, tickG);
         tagLeaf(xLabelNodes{k}, sprintf('axis-ticklabel-x-%d',k), 'tick-label');
+        setFontSizeFromLive(xLabelNodes{k}, ax.XAxis.FontSize);
     end
 end
 stats.nXTicks = numel(spineInfo.xTickNodes);
+if ~isempty(spineInfo.xTickMirrorNodes)
+    ticksXMirrorG = newGroup(doc, 'axis-ticks-x-mirror', 'ticks-mirror'); ticksXMirrorG.setAttribute('data-axis','x');
+    spineG.appendChild(ticksXMirrorG);
+    for k = 1:numel(spineInfo.xTickMirrorNodes)
+        relocateLeaf(spineInfo.xTickMirrorNodes{k}, ticksXMirrorG);
+        tagLeaf(spineInfo.xTickMirrorNodes{k}, sprintf('axis-tick-x-mirror-%d',k), 'tick-mark-mirror');
+    end
+end
 
 ticksYG = newGroup(doc, 'axis-ticks-y', 'ticks'); ticksYG.setAttribute('data-axis','y');
 spineG.appendChild(ticksYG);
@@ -213,17 +262,28 @@ for k = 1:numel(spineInfo.yTickNodes)
     if k <= numel(yLabelNodes) && ~isempty(yLabelNodes{k})
         relocateLeaf(yLabelNodes{k}, tickG);
         tagLeaf(yLabelNodes{k}, sprintf('axis-ticklabel-y-%d',k), 'tick-label');
+        setFontSizeFromLive(yLabelNodes{k}, ax.YAxis.FontSize);
     end
 end
 stats.nYTicks = numel(spineInfo.yTickNodes);
+if ~isempty(spineInfo.yTickMirrorNodes)
+    ticksYMirrorG = newGroup(doc, 'axis-ticks-y-mirror', 'ticks-mirror'); ticksYMirrorG.setAttribute('data-axis','y');
+    spineG.appendChild(ticksYMirrorG);
+    for k = 1:numel(spineInfo.yTickMirrorNodes)
+        relocateLeaf(spineInfo.yTickMirrorNodes{k}, ticksYMirrorG);
+        tagLeaf(spineInfo.yTickMirrorNodes{k}, sprintf('axis-tick-y-mirror-%d',k), 'tick-mark-mirror');
+    end
+end
 
 labelsG = newGroup(doc, 'axis-labels', 'axis-labels');
 spineG.appendChild(labelsG);
+axisLabelFontSize = struct('title',ax.Title.FontSize, 'xlabel',ax.XLabel.FontSize, 'ylabel',ax.YLabel.FontSize);
 for role = {'title','xlabel','ylabel'}
     node = axisLabelNode.(role{1});
     if isempty(node); continue; end
     relocateLeaf(node, labelsG);
     tagLeaf(node, ['axis-' role{1}], 'axis-label');
+    setFontSizeFromLive(node, axisLabelFontSize.(role{1}));
     stats.nAxisLabels = stats.nAxisLabels + 1;
 end
 
@@ -303,6 +363,12 @@ if ~isempty(legInfo)
         relocateLeaf(legInfo.boxNodes{bi}, boxG);
         tagLeaf(legInfo.boxNodes{bi}, sprintf('legend-box-%s',suffix), sprintf('legend-box-%s',suffix));
     end
+    % A MATLAB Legend has ONE FontSize shared by every entry (not per-entry) -- fetched directly
+    % rather than via identifyLegend.m (which only returns node references, not the Legend object
+    % itself) since ax is still live here.
+    legObjs = findobj(ancestor(ax,'figure'), 'Type','legend');
+    legendFontSize = [];
+    if ~isempty(legObjs); legendFontSize = legObjs(1).FontSize; end
     for ei = 1:numel(legInfo.entries)
         e = legInfo.entries(ei);
         si = seriesIndexOf(e.snapIndex);
@@ -311,6 +377,7 @@ if ~isempty(legInfo)
         legendG.appendChild(entryG);
         relocateLeaf(e.swatchNode, entryG); tagLeaf(e.swatchNode, sprintf('legend-swatch-%d',si), 'legend-swatch');
         relocateLeaf(e.textNode, entryG); tagLeaf(e.textNode, sprintf('legend-label-%d',si), 'legend-label');
+        setFontSizeFromLive(e.textNode, legendFontSize);
         stats.nLegendEntries = stats.nLegendEntries + 1;
     end
 end
@@ -350,8 +417,9 @@ end
 end
 
 function labelNodes = matchTickLabels(doc, tickLabelStrs, tickNodes, axisName, boxRect)
-% Candidate <text> nodes: content is one of the live tick label strings (ground truth, same source
-% dumpFontRegistry.m uses), AND positioned just outside the spine on the expected side (below for x,
+% Candidate <text> nodes: content is one of the live tick label strings (ground truth, from
+% ax.XAxis.TickLabels/ax.YAxis.TickLabels directly), AND positioned just outside the spine on the
+% expected side (below for x,
 % left for y) -- content alone risks a cross-axis collision, position alone has no exact distance to
 % anchor a threshold against, so both are required; loudly refuses to pair if the resulting count
 % doesn't match the tick marks.
@@ -436,6 +504,39 @@ end
 function tagLeaf(node, id, role)
 node.setAttribute('id', id);
 node.setAttribute('data-role', role);
+end
+
+function setFontSizeFromLive(node, fontSize)
+% setFontSizeFromLive  Overwrites node's own (baked, geometrically-scaled, slightly-rounded --
+% bakeTransforms.py, docs/findings.md) font-size attribute with the authoritative LIVE value read
+% directly from the corresponding ax/legend property -- no content-matching involved at all for the
+% roles this is called for (title/xlabel/ylabel/tick-labels/legend-labels), since which property to
+% read is already determined unambiguously by the role itself (REVISED 2026-08-29 from the previous
+% content-keyed dumpFontRegistry.m/bakeTransforms.py mechanism -- see this file's own header).
+if isempty(fontSize); return; end
+node.setAttribute('font-size', sprintf('%.10g', fontSize));
+end
+
+function resolved = setAnnotationFontSizeFromLive(node, adHocTextObjs)
+% setAnnotationFontSizeFromLive  Unlike setFontSizeFromLive's other callers, an annotation has no
+% single ax/legend property to read -- it's whichever live ad hoc text() object shares its exact
+% content, among a set already narrowed to "not title/xlabel/ylabel" (small, real content-matching
+% risk, same discipline identifyLegend.m already uses for its own box-restricted matching). Leaves
+% node's font-size untouched (the baked/scaled fallback stays) if zero or more than one candidate
+% shares that content -- returns false so the caller can count it rather than silently guess.
+resolved = false;
+content = strtrim(char(node.getTextContent()));
+if isempty(content) || isempty(adHocTextObjs); return; end
+nMatches = 0; matchFontSize = [];
+for i = 1:numel(adHocTextObjs)
+    if strcmp(strtrim(char(adHocTextObjs(i).String)), content)
+        nMatches = nMatches + 1;
+        matchFontSize = adHocTextObjs(i).FontSize;
+    end
+end
+if nMatches ~= 1; return; end
+setFontSizeFromLive(node, matchFontSize);
+resolved = true;
 end
 
 function relocateLeaf(node, newParent)

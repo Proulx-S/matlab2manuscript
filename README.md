@@ -39,13 +39,18 @@ this pipeline is its own, later, independent step, out of scope until then.
   (confirmed real, not hypothetical — e.g. a y-axis label) collapses to a single clean
   `rotate(angle,x,y)` on the leaf, pivoting on its own already-baked anchor, rather than a nested
   or distributed transform.
-- `dumpFontRegistry.m` — captures the AUTHORITATIVE live `FontSize` for title/xlabel/ylabel/tick
-  labels (keyed by exact text content) so baking can bypass a confirmed small (~≤0.38pt) rounding
-  artifact in MATLAB's own exported font-size. **Known gap, tracked deliberately, not silently
-  accepted:** legend text and any other ad hoc `text()` call (e.g. `plotVessels.m`'s own
-  vessel-ID corner label) aren't covered yet — those fall back to the scaled-and-rounded value.
-  Extend this registry (or get explicit sign-off that a given case is fine to leave) before
-  treating font-size handling as done.
+- **Font-size correction** (`groupAndTagSvg.m`, 2026-08-29 — REPLACES the earlier `dumpFontRegistry.m`
+  + `bakeTransforms.py` content-keyed registry, removed): `bakeTransforms.py` always writes the
+  geometrically-scaled font-size, which carries a confirmed small (~≤0.38pt) MATLAB rounding
+  artifact. `groupAndTagSvg.m` overwrites it with the AUTHORITATIVE live value, AFTER each text
+  node's role is already known unambiguously — title/xlabel/ylabel/tick-labels/legend-labels are
+  corrected by reading the matching `ax`/`Legend` property directly (no content-matching at all);
+  an ad hoc annotation is corrected by content-matching against a small, already-narrowed set of
+  still-live `text()` objects, tracked (`stats.nAnnotationFontSizeUnresolved`), never silently
+  guessed, if that's ambiguous. The old registry's flat `{content: fontSize}` key was fundamentally
+  ambiguous once more than 4 roles were covered — this repo's own validation panel has a y-axis
+  label and a legend label that are both literally `"signal"` with DIFFERENT font sizes, exactly the
+  case a content-only key gets wrong. See `docs/findings.md`.
 - `snapshotAxesStyle.m` / `matchGraphicsToSvg.m` / `dumpIdentitySvg.m` — the data-series matcher,
   with two strategies:
   1. **Real-color fingerprint** (the original approach): captures each live Line/Patch's color/style
@@ -141,12 +146,13 @@ this pipeline is its own, later, independent step, out of scope until then.
   deliberately share the same string) — correctly resolved to two distinct, correctly-nested
   elements.
 - `test/` — MATLAB scripts validating the above (see file headers for what each proves).
-  `test_match_prototype.m`/`test_edge_cases.m` (style-fingerprint matching) and
-  `test_registry_rotation.m` (font registry) still deliberately exercise a real plotting function
-  from `humanMouse` (`plotVessels.m`) — none of those touch `identifyAxisSpine.m`/`groupAndTagSvg.m`,
-  so `plotVessels.m`'s `TiledChartLayout` quirk doesn't affect them. `test_group_tag.m` (the
-  grouping/tagging pipeline) uses a plain, hand-built axes instead — see the Scope discipline note
-  above. Adjust `workDir` in the `plotVessels.m`-based tests if `humanMouse` lives elsewhere on this
+  `test_match_prototype.m`/`test_edge_cases.m` (style-fingerprint matching) still deliberately
+  exercise a real plotting function from `humanMouse` (`plotVessels.m`) — neither touches
+  `identifyAxisSpine.m`/`groupAndTagSvg.m`, so `plotVessels.m`'s `TiledChartLayout` quirk doesn't
+  affect them. `test_group_tag.m`/`test_box_on.m`/`test_fontsize_correction.m`/`test_pairing.m` (the
+  grouping/tagging pipeline and its own sub-mechanisms) use a plain, hand-built axes instead — see
+  the Scope discipline note above. Adjust `workDir` in the `plotVessels.m`-based tests if
+  `humanMouse` lives elsewhere on this
   machine.
 - `docs/findings.md` — consolidated empirical findings from the 2026-08-26 research session
   (SVG/EPS/PDF export behavior across every MATLAB renderer, the `ScreenPixelsPerInch`/72 scale
@@ -165,11 +171,11 @@ swatch/label) → identify axis spine/ticks → identify legend box → identify
 `docs/grouping-hierarchy.csv`), verified pixel-identical to the un-grouped baked file. Known,
 deliberately out-of-scope gaps (tracked, not silently accepted): `TiledChartLayout`-hosted axes
 (i.e. `plotVessels.m` and anything like it) are not supported — adapting an arbitrary MATLAB figure
-down to a plain single-axes figure is its own, later, independent step; an ad hoc `text()`
-annotation's font-size still isn't covered by `dumpFontRegistry.m` (same known gap, for legend text
-and ad hoc labels); `ax.Box='on'` is not handled; multi-legend/multi-axes figures are out of scope
-(single-axes-per-figure panel only). (Line/Patch error-band pairing previously used `DisplayName`
-equality only — REVISED 2026-08-29, now uses `Tag`, see `assignSeriesIndices.m`.)
+down to a plain single-axes figure is its own, later, independent step; multi-legend/multi-axes
+figures are out of scope (single-axes-per-figure panel only). (`ax.Box='on'` and the legend/
+annotation font-size gap were both fixed 2026-08-29 — see `identifyAxisSpine.m` and the font-size
+correction note above; Line/Patch error-band pairing previously used `DisplayName` equality only —
+REVISED 2026-08-29, now uses `Tag`, see `assignSeriesIndices.m`.)
 
 Pillar 2 (the mm-based resize round-trip: harvest a human's SVG edit to the spine → feed back into
 MATLAB → regenerate everything else around it → re-place) is designed and spot-verified (MATLAB
