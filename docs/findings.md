@@ -210,3 +210,15 @@ don't touch axis-spine identification and aren't affected by this.
   tagged SVG, feed it back into MATLAB via `ax.InnerPosition`, regenerate, re-place) is not yet
   built -- the mechanism it depends on (`PositionConstraint='innerposition'`) is confirmed working,
   but no code exists yet to actually do the harvest/feedback/regenerate loop.
+- **`id` collisions across multiple panels in one composed manuscript figure, NOT yet handled.**
+  Every panel `groupAndTagSvg.m` tags uses the SAME fixed id scheme (`axis-spine`,
+  `dataseries-1-<slug>-line`, `legend-box-bg`, etc.) -- inserting two tagged panels into one
+  composed SVG (the eventual output of pillar 2's own panel-insertion step) means duplicate ids in
+  one document, which is invalid SVG and makes `id`-based lookup undefined (typically first-match-
+  wins, silently wrong for every panel after the first). `data-role`/`data-group` values are NOT
+  the problem -- those are MEANT to repeat across panels (e.g. selecting every panel's own
+  `axis-spine` at once is a real, useful multi-panel operation). The fix belongs in the
+  panel-insertion step itself, not in `groupAndTagSvg.m`: when a panel is inserted into a composed
+  figure, wrap it in its own container and rewrite every descendant `id` with a panel-unique prefix
+  (e.g. `panelA-axis-spine-x`), leaving `data-role`/`data-group` untouched. Not yet designed or
+  built -- flagged here so it isn't rediscovered the hard way once pillar 2 starts.

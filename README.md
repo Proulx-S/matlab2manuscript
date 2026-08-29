@@ -65,10 +65,15 @@ this pipeline is its own, later, independent step, out of scope until then.
   confirmed fact that `DisplayName` text survives export only as a literal legend `<text>` glyph,
   restricted spatially to the legend's own box. Returns `[]` if no live Legend exists (not an
   error).
-- `docs/grouping-hierarchy.csv` — the editable SPEC for `groupAndTagSvg.m`'s own group/role
-  hierarchy (id pattern, parent, role, contents, cardinality) — the single source of truth for what
-  the code below is supposed to build. Edit this file to propose a hierarchy change; it's the
-  intended way to communicate a desired restructuring without needing prose back-and-forth.
+- `docs/grouping-hierarchy.csv` — a pure OUTLINE view of `groupAndTagSvg.m`'s own group hierarchy:
+  columns are hierarchy levels (left→right = shallower→deeper), one label per row at its own
+  nesting depth, id patterns only (`{n}`/`{i}`/`{k}` are template placeholders, not tied to any
+  specific panel's actual tick/series/entry count). This is the intended way to propose a hierarchy
+  change — edit the sheet directly (move a label to a different column to re-nest it, add/remove
+  rows) and hand it back, rather than describing the change in prose. `docs/grouping-hierarchy-
+  detail.csv` has the same tree with full metadata (parent id, `data-role`, contents, cardinality,
+  notes) for implementation reference — edit the outline first, the detail file gets reconciled by
+  hand afterward.
 - `groupAndTagSvg.m` — the grouping/tagging pipeline step itself: orchestrates the primitives above
   and restructures the DOM into real nested `<g id="..." data-role="...">` containers for four
   roles — **furniture** (figure/axes background, gridlines), **axis-spine** (spine lines, one
