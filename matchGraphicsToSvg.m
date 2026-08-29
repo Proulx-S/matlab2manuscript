@@ -146,5 +146,13 @@ else
     nums = regexp(str, '[-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?', 'match');
     vals = str2double(nums);
     pts = reshape(vals, 2, [])';
+    % A closed patch path (MATLAB's own -dsvg exporter closes a filled polygon by explicitly
+    % repeating its first vertex as its own last vertex, not via a separate 'Z' command -- confirmed
+    % real: a genuine 83-vs-82 off-by-one against live nPts otherwise, first hit validating a real
+    % confidence-band Patch end-to-end) -- drop that repeated closing vertex so the point count
+    % matches live data exactly, not "live data + 1".
+    if size(pts,1) > 1 && all(abs(pts(1,:) - pts(end,:)) < 1e-6)
+        pts = pts(1:end-1,:);
+    end
 end
 end

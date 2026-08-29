@@ -59,14 +59,24 @@ end
 
 texts = doc.getElementsByTagName('text');
 leg.entries = struct('snapIndex',{},'displayName',{},'swatchNode',{},'textNode',{});
+seenDisplayNames = {};
 for i = 1:numel(snap)
     dn = snap(i).displayName;
     if isempty(dn); continue; end
+    % A legend entry is per DISPLAYED ITEM, not per snap(i) -- a Line and its own confidence-band
+    % Patch share one DisplayName by design (groupAndTagSvg.m's own series-pairing key), and only the
+    % Line normally gets an actual legend entry (the confidence band is typically excluded from the
+    % legend, e.g. via an explicit legend() handle list). Processing snap(i) a second time for the
+    % SAME DisplayName would just re-find the identical text/swatch nodes and hand them a duplicate
+    % id downstream (confirmed real: caught by groupAndTagSvg.m producing two <g id="legend-entry-1">
+    % elements) -- skip any DisplayName already resolved to an entry.
+    if ismember(dn, seenDisplayNames); continue; end
     textNode = findTextByContentInBox(texts, dn, refRect);
     if isempty(textNode); continue; end   % legend off, or this series has no legend entry -- not an error
     hex = snap(i).hex; if isempty(hex); hex = snap(i).fillHex; end
     swatchNode = findSwatchByColorInBox(doc, hex, refRect);
     leg.entries(end+1) = struct('snapIndex',i,'displayName',dn,'swatchNode',swatchNode,'textNode',textNode); %#ok<AGROW>
+    seenDisplayNames{end+1} = dn; %#ok<AGROW>
 end
 end
 
