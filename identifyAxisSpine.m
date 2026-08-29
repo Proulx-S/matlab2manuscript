@@ -12,7 +12,10 @@ function spine = identifyAxisSpine(ax, doc, canvasSizePt)
 % span (the spine is the one long polyline spanning the whole inner box; ticks are short).
 %
 % ax             live axes (already plotted+exported; Units='normalized',
-%                PositionConstraint='innerposition' assumed per docs/findings.md)
+%                PositionConstraint='innerposition' assumed per docs/findings.md -- EXCEPT for an
+%                axes hosted inside a TiledChartLayout, where MATLAB doesn't allow this property to
+%                be set at all and the check is skipped; see the assertion below for why that's
+%                still safe)
 % doc            org.w3c.dom.Document from xmlread(bakedSvgFile)
 % canvasSizePt   [width height] of the SVG canvas in the SAME units as its own coordinates -- pass
 %                the baked SVG's own viewBox width/height (getCanvasSizeFromDoc.m), NOT the figure's
@@ -29,8 +32,19 @@ function spine = identifyAxisSpine(ax, doc, canvasSizePt)
 
 assert(strcmp(ax.Box,'off'), 'identifyAxisSpine:boxOnNotSupported', ...
     'ax.Box=''on'' not supported yet -- this prototype only handles the confirmed real case (Box=''off'').');
-assert(strcmp(ax.PositionConstraint,'innerposition'), 'identifyAxisSpine:wrongPositionConstraint', ...
-    'ax.PositionConstraint must be ''innerposition'' (see docs/findings.md) -- got ''%s''.', ax.PositionConstraint);
+% PositionConstraint cannot be set for an axes hosted inside a TiledChartLayout at ALL (confirmed:
+% MATLAB rejects the assignment outright with "Unable to set ... for objects in a TiledChartLayout",
+% and reading it back afterward is a cosmetic bookkeeping value with no effect on actual geometry,
+% not a real pin) -- plotVessels.m always uses tiledlayout, even for a single panel, so this case is
+% real, not hypothetical. The real invariant this tool actually needs -- that the exported spine
+% geometry matches live ax.InnerPosition -- holds empirically for a tiled axes too (confirmed via
+% direct measurement, within ~1.2pt, accounted for by this function's own `tol` below), it just
+% isn't independently verifiable via this property the way it is for a plain axes, whose own pin
+% DOES matter and is still checked.
+if ~isa(ax.Parent, 'matlab.graphics.layout.TiledChartLayout')
+    assert(strcmp(ax.PositionConstraint,'innerposition'), 'identifyAxisSpine:wrongPositionConstraint', ...
+        'ax.PositionConstraint must be ''innerposition'' (see docs/findings.md) -- got ''%s''.', ax.PositionConstraint);
+end
 
 ip = ax.InnerPosition;   % normalized [x y w h], MATLAB-space origin bottom-left
 W = canvasSizePt(1); H = canvasSizePt(2);
@@ -43,7 +57,15 @@ y1 = H - yBottomMatlab;
 spine.expectedBoxPt = [x0 y0 x1 y1];
 
 polylines = doc.getElementsByTagName('polyline');
-tol = 0.5;   % pt -- generous vs. sub-point rounding noise seen elsewhere in this repo
+% 2pt, not the sub-point tolerance other rounding noise in this repo would suggest: an axes hosted
+% inside a TiledChartLayout (confirmed real -- plotVessels.m always uses tiledlayout, even for a
+% single panel) can have its ACTUAL exported spine position differ from live ax.InnerPosition by up
+% to ~1.2pt, an extra quantization from tiledlayout's own internal layout math on top of the
+% well-understood export scale factor. Confirmed by first hitting exactly this with a real
+% plotVessels.m panel (identifyAxisSpine:noRulerCandidates with 0 candidates found, tol=0.5) and
+% measuring the actual exported-vs-expected deltas directly. Still comfortably tighter than any real
+% ambiguity (ticks are ~4.75pt long, the spine itself hundreds of pt).
+tol = 2;
 boxSpanX = x1 - x0; boxSpanY = y1 - y0;
 
 % A tick mark is perpendicular to its own axis (an x-tick is a short VERTICAL segment, a y-tick a

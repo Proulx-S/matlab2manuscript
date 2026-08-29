@@ -26,8 +26,12 @@ from an empirical experiment), this repo's own purpose IS the tool — a from-sc
 
 Scope discipline: build/validate this against a single-axes-per-figure panel first (the simplest
 real case, `plotVessels.m`'s single-metric line panel from `humanMouse`) before tackling panels
-that start life as one tile inside a larger `tiledlayout` (`plotGaussianFitPanels.m`,
-`plotFaaSpace.m`) — those need their own decomposition step, out of scope for now.
+that start life as one tile among SEVERAL in a larger `tiledlayout` (`plotGaussianFitPanels.m`,
+`plotFaaSpace.m`) — those need their own decomposition step, out of scope for now. **Note (found
+2026-08-28, see `docs/findings.md`): `plotVessels.m`'s own "single-axes" panel is itself already a
+1×1 `tiledlayout` internally** — this repo's pipeline handles that case (a solo tile spanning nearly
+the whole figure) fine, once its own geometric tolerance accounts for tiledlayout's small extra
+layout quantization; it's specifically MULTIPLE tiles per figure that remain out of scope.
 
 ## Layout
 

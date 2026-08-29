@@ -266,10 +266,11 @@ end
 % ============================== identification helpers ==============================
 
 function furn = identifyFurniture(doc, canvasSizePt, axesBoxPt)
-% The figure-background rect (spans the whole canvas) and axes-background rect (spans the spine's
-% own box, found via findClosedRectPaths.m -- shared with identifyLegend.m), plus every gridline
-% polyline (excluded from identifyAxisSpine.m's own spine/tick candidacy by the SAME opacity signal
-% -- gridlines are always drawn with a fractional stroke-opacity, confirmed in this repo's probe SVG).
+% The figure-background rect (spans the whole canvas -- an exact match, no live-property-derived
+% slop involved) and axes-background rect (spans the spine's own box, found via
+% findClosedRectPaths.m -- shared with identifyLegend.m), plus every gridline polyline (excluded
+% from identifyAxisSpine.m's own spine/tick candidacy by the SAME opacity signal -- gridlines are
+% always drawn with a fractional stroke-opacity, confirmed in this repo's probe SVG).
 rects = findClosedRectPaths(doc);
 furn.figureBgNode = [];
 furn.axesBgNode = [];
@@ -277,7 +278,7 @@ for i = 1:numel(rects)
     r = rects{i}.rect;
     if all(abs(r - [0 0 canvasSizePt(1) canvasSizePt(2)]) < 1)
         furn.figureBgNode = rects{i}.node;
-    elseif all(abs(r - axesBoxPt) < 1)
+    elseif all(abs(r - axesBoxPt) < 2)   % 2pt: see identifyAxisSpine.m's own TiledChartLayout note
         furn.axesBgNode = rects{i}.node;
     end
 end
@@ -296,7 +297,12 @@ function labelNodes = matchTickLabels(doc, tickLabelStrs, tickNodes, axisName, b
 % dumpFontRegistry.m uses), AND positioned just outside the spine on the expected side (below for x,
 % left for y) -- content alone risks a cross-axis collision, position alone has no exact distance to
 % anchor a threshold against, so both are required; loudly refuses to pair if the resulting count
-% doesn't match the tick marks.
+% doesn't match the tick marks. `boxRect` itself (identifyAxisSpine.m's expectedBoxPt, derived from
+% live ax.InnerPosition) can differ from the ACTUAL exported spine position by up to ~1.2pt for an
+% axes hosted inside a TiledChartLayout (confirmed real -- plotVessels.m always uses tiledlayout,
+% even for a single panel, and tiledlayout's own internal layout math introduces small extra
+% quantization beyond the well-understood export scale factor) -- the 2pt margin below accounts for
+% that, comfortably tighter than any real ambiguity (tick labels sit ~10-20pt outside the box).
 texts = doc.getElementsByTagName('text');
 cands = {};
 for k = 0:texts.getLength()-1
@@ -305,10 +311,10 @@ for k = 0:texts.getLength()-1
     if ~ismember(content, tickLabelStrs); continue; end
     x = str2double(char(n.getAttribute('x'))); y = str2double(char(n.getAttribute('y')));
     if axisName == 'x'
-        inRange = y > boxRect(4) - 0.5 && y < boxRect(4) + 30;   % below the box, SVG y-down
+        inRange = y > boxRect(4) - 2 && y < boxRect(4) + 30;   % below the box, SVG y-down
         pos = x;
     else
-        inRange = x < boxRect(1) + 0.5 && x > boxRect(1) - 30;   % left of the box
+        inRange = x < boxRect(1) + 2 && x > boxRect(1) - 30;   % left of the box
         pos = y;
     end
     if ~inRange; continue; end

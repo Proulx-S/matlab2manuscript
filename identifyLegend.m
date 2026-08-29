@@ -41,7 +41,11 @@ candBoxes = {};
 for i = 1:numel(rectPaths)
     r = rectPaths{i}.rect;
     isFigureBg = all(abs(r - [0 0 canvasSizePt(1) canvasSizePt(2)]) < 1);
-    isAxesBg = all(abs(r - axesBoxPt) < 1);
+    % 2pt, not 1pt: axesBoxPt is derived from live ax.InnerPosition, which can differ from the
+    % ACTUAL exported axes-background geometry by up to ~1.2pt for an axes hosted inside a
+    % TiledChartLayout (confirmed real -- see identifyAxisSpine.m's own note; plotVessels.m always
+    % uses tiledlayout, even for a single panel).
+    isAxesBg = all(abs(r - axesBoxPt) < 2);
     if ~isFigureBg && ~isAxesBg
         candBoxes{end+1} = rectPaths{i}; %#ok<AGROW>
     end

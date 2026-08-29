@@ -11,6 +11,14 @@ addpath(repoDir);
 outDir = fullfile(fileparts(mfilename('fullpath')), 'out');
 if ~exist(outDir,'dir'); mkdir(outDir); end
 
+% Seeded for reproducibility -- the exact random noise here affects auto-computed y-tick VALUES
+% (hence label string widths), which shifts how much horizontal space plotVessels.m's tiledlayout
+% leaves for the plot box, which changes how many x-ticks MATLAB's own auto-tick-placement draws.
+% Confirmed real: an earlier unseeded run of this same test produced 11 x-ticks, a later one only 5.
+% Assertions below compare against LIVE tick-label counts (captured before close(fig)), not
+% hardcoded literals, so this test stays correct even if that chain shifts again for some other
+% reason -- the seed just keeps THIS run's own numbers stable and inspectable.
+rng(0);
 t = (0:0.1:20)';
 vessel = struct();
 vessel.tsImMotionCorrected.gaussVascPhys.radius = 5 + 0.3*sin(2*pi*t/5)' + 0.02*randn(1,numel(t));
@@ -18,10 +26,18 @@ vessel.dt = 0.1;
 
 fig = plotVessels(vessel, 'tsImMotionCorrected.gaussVascPhys.radius', struct('legendVerbose',1));
 ax = findobj(fig,'Type','axes'); ax = ax(1);
-fprintf('ax.Box=%s, ax.Title.String="%s", ax.XLabel.String="%s", ax.YLabel.String="%s"\n', ...
-    ax.Box, char(ax.Title.String), char(ax.XLabel.String), char(ax.YLabel.String));
+% plotVessels.m ALWAYS hosts its axes inside a tiledlayout (even for a single panel, confirmed via
+% class(ax.Parent)=='matlab.graphics.layout.TiledChartLayout') -- PositionConstraint cannot be set
+% for a tiled axes at all (MATLAB rejects it: "Unable to set ... for objects in a TiledChartLayout"),
+% so identifyAxisSpine.m skips that check for one. See its own comment for why the real invariant
+% (exported spine geometry matches live ax.InnerPosition within a small, confirmed tolerance) is
+% what's actually verified instead, empirically, downstream.
+fprintf('ax.Box=%s, class(ax.Parent)=%s, ax.Title.String="%s", ax.XLabel.String="%s", ax.YLabel.String="%s"\n', ...
+    ax.Box, class(ax.Parent), char(ax.Title.String), char(ax.XLabel.String), char(ax.YLabel.String));
 
 snap = snapshotAxesStyle(ax);
+nXTicksExpected = numel(ax.XAxis.TickLabels);
+nYTicksExpected = numel(ax.YAxis.TickLabels);
 
 rawFile = fullfile(outDir,'group_tag_raw.svg');
 print(fig, rawFile, '-dsvg','-vector');
@@ -39,13 +55,14 @@ fprintf('stats: nDataSeries=%d nLegendEntries=%d nXTicks=%d nYTicks=%d nAxisLabe
 
 assert(stats.nDataSeries == 1, 'expected exactly 1 tagged data series');
 assert(stats.nLegendEntries == 1, 'expected exactly 1 tagged legend entry');
-assert(stats.nXTicks == 11, 'expected 11 x-ticks (0:2:20)');
-assert(stats.nYTicks == 7, 'expected 7 y-ticks');
+assert(stats.nXTicks == nXTicksExpected, 'expected %d x-ticks (from live ax.XAxis.TickLabels)', nXTicksExpected);
+assert(stats.nYTicks == nYTicksExpected, 'expected %d y-ticks (from live ax.YAxis.TickLabels)', nYTicksExpected);
 % ax.Title.String is empty for this real panel (the top text seen in this repo's own probe SVG is a
 % separate whole-figure title/annotation, not ax.Title -- not this tool's concern yet) -- only
 % xlabel+ylabel are real ax-level labels here.
 assert(stats.nAxisLabels == 2, 'expected xlabel+ylabel tagged (2, ax.Title.String is empty for this panel)');
-assert(stats.nFurnitureGridlines == 18, 'expected 18 gridlines (11 vertical + 7 horizontal)');
+assert(stats.nFurnitureGridlines == nXTicksExpected + nYTicksExpected, ...
+    'expected %d gridlines (one per tick, both axes)', nXTicksExpected + nYTicksExpected);
 assert(stats.nAnnotations == 2, 'expected 2 leftover annotations (whole-figure title-ish text + vessel-ID corner label)');
 
 % --- element-count invariant: grouping/tagging must never add/remove/duplicate a rendering-bearing
@@ -97,10 +114,11 @@ assert(hasTestParentId(tick1Mark,'axis-tick-x-1') && hasTestParentId(tick1Label,
 assert(hasTestAncestorId(tick1Mark,'axis-ticks-x') && hasTestAncestorId(tick1Mark,'axis-spine'), ...
     'x-tick 1 not nested under axis-ticks-x/axis-spine');
 
-tick7yMark = findTestById(docTagged,'axis-tick-y-7-mark');
-tick7yLabel = findTestById(docTagged,'axis-ticklabel-y-7');
-assert(hasTestParentId(tick7yMark,'axis-tick-y-7') && hasTestParentId(tick7yLabel,'axis-tick-y-7'), ...
-    'y-tick 7''s mark and label are not grouped together');
+lastY = nYTicksExpected;
+tickLastYMark = findTestById(docTagged, sprintf('axis-tick-y-%d-mark',lastY));
+tickLastYLabel = findTestById(docTagged, sprintf('axis-ticklabel-y-%d',lastY));
+assert(hasTestParentId(tickLastYMark, sprintf('axis-tick-y-%d',lastY)) && hasTestParentId(tickLastYLabel, sprintf('axis-tick-y-%d',lastY)), ...
+    'last y-tick''s mark and label are not grouped together');
 
 xlabelNode = findTestById(docTagged,'axis-xlabel');
 assert(hasTestParentId(xlabelNode,'axis-labels') && hasTestAncestorId(xlabelNode,'axis-spine'), ...

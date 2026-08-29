@@ -24,6 +24,9 @@ vessel.dt = 0.1;
 
 fig = plotVessels(vessel, 'tsImMotionCorrected.gaussVascPhys.radius', struct('legendVerbose',1));
 ax = findobj(fig,'Type','axes'); ax = ax(1);
+% plotVessels.m ALWAYS hosts its axes inside a tiledlayout (even for a single panel, confirmed via
+% class(ax.Parent)=='matlab.graphics.layout.TiledChartLayout') -- PositionConstraint cannot be set
+% for a tiled axes at all (see identifyAxisSpine.m's own comment for the full story).
 snap = snapshotAxesStyle(ax);
 
 figFile = fullfile(outDir,'panelA.fig');

@@ -87,6 +87,47 @@ the SVG spec's own `rotate()` → `matrix(cos,sin,-sin,cos,0,0)` expansion).
   flipped back to `'auto'`** the moment a plotting command (`plot()`) runs on axes with no prior
   children — set such properties *after* the first plot call, not before.
 
+## `plotVessels.m` always hosts its axes in a `TiledChartLayout` -- even for one panel (2026-08-28)
+
+Discovered while regenerating this repo's own example artifacts: `identifyAxisSpine.m`'s
+`noRulerCandidates` error fired intermittently against `plotVessels.m`'s real output, with no
+apparent pattern. Root cause, confirmed by direct inspection: `plotVessels.m` calls
+`tiledlayout(hFig, nRow, nCol, ...)` + `nexttile` unconditionally (`plotVessels.m:1230`/`:1239`),
+so `class(ax.Parent)` is ALWAYS `matlab.graphics.layout.TiledChartLayout`, never a plain figure --
+this repo's own prior validation runs were quietly exercising a tiled axes the whole time, not the
+plain standalone axes the scope note above assumed.
+
+Two real consequences, both now handled:
+
+- **`ax.PositionConstraint` cannot be SET at all for a tiled axes.** MATLAB rejects the assignment
+  outright (`MATLAB:handle_graphics:Layout:NoPositionSetInTiledChartLayout`, "Unable to set
+  'Position', 'InnerPosition', 'OuterPosition', or 'PositionConstraint' for objects in a
+  TiledChartLayout") -- and confusingly, READING it back afterward shows the requested value anyway
+  (cosmetic bookkeeping, not a real pin: tiledlayout's own layout engine still controls the actual
+  geometry regardless of what this property claims). `identifyAxisSpine.m`'s own precondition
+  assertion now SKIPS this check when `ax.Parent` is a `TiledChartLayout`, since it's neither
+  settable nor meaningful there -- the real invariant (below) is checked empirically instead.
+- **Live `ax.InnerPosition` can differ from the ACTUAL exported spine geometry by up to ~1.2pt** for
+  a tiled axes -- an extra quantization from tiledlayout's own internal layout math, on top of the
+  already-understood `72/ScreenPixelsPerInch` export scale factor, that a plain standalone axes
+  doesn't have (confirmed: this repo's own earlier purely-synthetic, non-tiled validation showed
+  exact matches). `identifyAxisSpine.m`'s own geometric tolerance (`tol`) was widened from 0.5pt to
+  2pt to absorb this -- still comfortably tighter than any real ambiguity (ticks are ~4.75pt long,
+  the spine itself hundreds of pt) -- and the same widening was applied everywhere else that
+  compares an `expectedBoxPt` (identifyAxisSpine.m's own live-`ax.InnerPosition`-derived value)
+  against actual exported geometry: `identifyLegend.m`'s axes-background elimination,
+  `groupAndTagSvg.m`'s furniture identification and tick-label position-range check.
+
+**Separately, real data-dependent nondeterminism, not a bug in this tool**: this repo's own tests
+generate `vessel.tsImMotionCorrected.gaussVascPhys.radius` with `randn()`-perturbed synthetic data.
+The exact noise affects auto-computed y-tick VALUES (hence tick-label string widths), which shifts
+how much horizontal space `plotVessels.m`'s tiledlayout leaves for the plot box, which changes how
+many x-ticks MATLAB's own auto-tick-placement draws (confirmed real: an unseeded run of
+`test_group_tag.m` produced 11 x-ticks one time, only 5 another). Fixed in this repo's own tests by
+(1) seeding `rng(0)` for reproducibility and (2) asserting tick counts against LIVE
+`ax.XAxis.TickLabels`/`ax.YAxis.TickLabels`, never a hardcoded literal -- so the test stays correct
+even if this chain shifts again for some other reason.
+
 ## The axis-spine identification pass, and end-to-end grouping/tagging (2026-08-28)
 
 Built (`identifyAxisSpine.m`/`identifyLegend.m`/`groupAndTagSvg.m`), validated against
