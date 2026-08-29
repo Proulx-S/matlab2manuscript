@@ -36,12 +36,17 @@ end
 assert(isscalar(legHandles), 'identifyLegend:multipleLegends', ...
     'more than one Legend object on this figure -- multi-panel/multi-legend figures are out of scope for this single-axes prototype.');
 
+% bgTol=1.5pt, not a tighter sub-point tolerance: the 72/ScreenPixelsPerInch rounding discrepancy
+% (docs/findings.md) scales with absolute canvas size, and a US-Letter canvas (2026-08-29, the new
+% runPillar1.m copy-step default) confirmed a real ~1.14pt figure-background mismatch that a 1pt
+% tolerance rejected -- same family/magnitude as identifyAxisSpine.m's own already-widened 1.5pt tol.
+bgTol = 1.5;
 rectPaths = findClosedRectPaths(doc);
 candBoxes = {};
 for i = 1:numel(rectPaths)
     r = rectPaths{i}.rect;
-    isFigureBg = all(abs(r - [0 0 canvasSizePt(1) canvasSizePt(2)]) < 1);
-    isAxesBg = all(abs(r - axesBoxPt) < 1);
+    isFigureBg = all(abs(r - [0 0 canvasSizePt(1) canvasSizePt(2)]) < bgTol);
+    isAxesBg = all(abs(r - axesBoxPt) < bgTol);
     if ~isFigureBg && ~isAxesBg
         candBoxes{end+1} = rectPaths{i}; %#ok<AGROW>
     end

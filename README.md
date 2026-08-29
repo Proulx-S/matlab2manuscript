@@ -27,23 +27,30 @@ from an empirical experiment), this repo's own purpose IS the tool — a from-sc
 Scope discipline: build/validate this against a **plain, hand-built single-axes figure** first —
 not even `plotVessels.m`'s own single-metric panel, once it was discovered (2026-08-28) that
 `plotVessels.m` always hosts its axes inside a `TiledChartLayout`, even for one panel (see
-`docs/findings.md`). Seb's own call (2026-08-29): don't accommodate `TiledChartLayout` for now —
-adapting an arbitrary MATLAB figure (tiled or not) down to a plain single-axes figure suitable for
-this pipeline is its own, later, independent step, out of scope until then.
+`docs/findings.md`). `TiledChartLayout`-hosted axes are now SUPPORTED as of `runPillar1.m`'s own
+copy step (2026-08-29, see below and `docs/findings.md`) — `copyobj` detaches such an axes into a
+plain axes cleanly, so this restriction only ever applied to code paths that skip `runPillar1.m` and
+export directly from the caller's own raw figure.
 
 ## Layout
 
-- **`runPillar1.m`** (2026-08-29) — the single-function entry point for the whole pillar-1 pipeline:
-  `stats = runPillar1(ax, outDir, baseName)` runs snapshot → raw export → bake → identity export →
-  identity bake → group/tag, producing just `<baseName>_tagged.svg`. The four intermediate files
-  this needs along the way are deleted once no longer needed by default —
-  `opts.keepIntermediates=true` keeps them (using the exact naming convention
-  `examples/makeExamplePanelA.m` already established by hand: `<baseName>_raw.svg`, `<baseName>.svg`
-  baked, `<baseName>_identity_raw.svg`/`<baseName>_identity.svg`). Call with no arguments for a
+- **`runPillar1.m`** (2026-08-29, revised same day for the copy step) — the single-function entry
+  point for the whole pillar-1 pipeline: `stats = runPillar1(ax, outDir, figId, panId, opts)` first
+  `copyobj`'s `ax` (and its Legend) into a fresh figure on a fixed standard canvas (default US
+  Letter portrait, `opts.canvasSize`/`opts.canvasUnits`) -- `ax`/its own figure are NEVER touched --
+  then runs snapshot → raw export → bake → identity export → identity bake → group/tag on the COPY,
+  producing just `<figId>_<panId>_tagged.svg`. `figId`/`panId` are compulsory (they name the output
+  stem; embedding them into every tagged element's own `id`, for safe multi-panel composition, is a
+  deliberately deferred later step -- see docs/findings.md). The four intermediate files this needs
+  along the way are deleted once no longer needed by default — `opts.keepIntermediates=true` keeps
+  them (`<figId>_<panId>_raw.svg`, `<figId>_<panId>.svg` baked,
+  `<figId>_<panId>_identity_raw.svg`/`<figId>_<panId>_identity.svg`). Call with no arguments for a
   self-populating default-opts struct + help text. Validated (`test/test_run_pillar1.m`) to produce
-  BYTE-IDENTICAL output to calling every step below by hand — this is the primary way to run pillar 1
-  now; the individual functions below remain directly callable for finer-grained control or when
-  composing pillar 1 into something larger (e.g. pillar 2, eventually).
+  BYTE-IDENTICAL output to calling every step (including the copy) by hand, and
+  (`test/test_tiledlayout_support.m`) that a `TiledChartLayout`-hosted axes produces identical output
+  to an equivalent plain axes -- this is the primary way to run pillar 1 now; the individual
+  functions below remain directly callable for finer-grained control or when composing pillar 1 into
+  something larger (e.g. pillar 2, eventually).
 - `bakeTransforms.py` — flattens every `transform="matrix(...)"` MATLAB's exporter emits directly
   into each element's own geometry/size attributes (compulsory first step after export — see
   `docs/findings.md` for why). Preserves `<text>` as real text; a genuinely rotated `<text>`
@@ -180,13 +187,16 @@ export (`dumpIdentitySvg.m`) → match data series by identity-color cross-refer
 swatch/label) → identify axis spine/ticks → identify legend box → identify furniture
 (background/gridlines) → restructure into real nested `<g id=... data-role=...>` groups (spec:
 `docs/grouping-hierarchy.csv`), verified pixel-identical to the un-grouped baked file. Known,
-deliberately out-of-scope gaps (tracked, not silently accepted): `TiledChartLayout`-hosted axes
-(i.e. `plotVessels.m` and anything like it) are not supported — adapting an arbitrary MATLAB figure
-down to a plain single-axes figure is its own, later, independent step; multi-legend/multi-axes
-figures are out of scope (single-axes-per-figure panel only). (`ax.Box='on'` and the legend/
-annotation font-size gap were both fixed 2026-08-29 — see `identifyAxisSpine.m` and the font-size
-correction note above; Line/Patch error-band pairing previously used `DisplayName` equality only —
-REVISED 2026-08-29, now uses `Tag`, see `assignSeriesIndices.m`.)
+deliberately out-of-scope gaps (tracked, not silently accepted): multi-legend/multi-axes figures are
+out of scope (single-axes-per-figure panel only); embedding `figId`/`panId` into every tagged
+element's own `id` (needed for safe multi-panel composition — colliding ids otherwise once more
+than one panel lands in one composed SVG) is deferred to the multi-panel composition step itself,
+not yet built. (`ax.Box='on'` and the legend/annotation font-size gap were both fixed 2026-08-29 —
+see `identifyAxisSpine.m` and the font-size correction note above; Line/Patch error-band pairing
+previously used `DisplayName` equality only — REVISED 2026-08-29, now uses `Tag`, see
+`assignSeriesIndices.m`; `TiledChartLayout`-hosted axes — i.e. `plotVessels.m` and anything like it
+— were out of scope, REVISED 2026-08-29, now supported via `runPillar1.m`'s own `copyobj`-based copy
+step, see below.)
 
 Pillar 2 (the mm-based resize round-trip: harvest a human's SVG edit to the spine → feed back into
 MATLAB → regenerate everything else around it → re-place) is designed and spot-verified (MATLAB

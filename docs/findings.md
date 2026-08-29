@@ -225,7 +225,7 @@ validate the new `dataseries` `value`/`conf` split (Seb's other 2026-08-29 ask, 
   producing two `<g id="legend-entry-1">` elements (an invalid duplicate id). Fixed by skipping any
   `DisplayName` already resolved to an entry.
 
-## `plotVessels.m` always hosts its axes in a `TiledChartLayout` — decided out of scope (2026-08-29)
+## `plotVessels.m` always hosts its axes in a `TiledChartLayout` — decided out of scope (2026-08-29, SUPERSEDED later the same day -- see "The copy step" section below)
 
 Discovered while regenerating this repo's own example artifacts: `identifyAxisSpine.m` failed
 intermittently against real `plotVessels.m` output, with no apparent pattern. Root cause, confirmed
@@ -247,6 +247,17 @@ hand-built `axes()` instead of `plotVessels.m` for anything touching `identifyAx
 `groupAndTagSvg.m` — `plotVessels.m` is still used for the style-fingerprint matching tests
 (`test_match_prototype.m`/`test_edge_cases.m`), which don't touch axis-spine identification and
 aren't affected by this.
+
+**SUPERSEDED later the same day**, once `runPillar1.m` gained a copy step (see "The copy step:
+`runPillar1.m` now normalizes `ax` onto a shared standard canvas" below): that step never exports or
+bakes the ORIGINAL tiled axes at all — it only ever reads its `InnerPosition` PROPERTY value and
+re-imposes that same value on a plain-axes copy, which is what actually gets exported/baked/tagged.
+The ~1.2pt discrepancy documented above is specifically between a tiled axes' `InnerPosition`
+property and ITS OWN rendered/exported spine geometry (a tiled-layout-engine quantization effect) —
+irrelevant once nothing downstream ever exports the tiled axes itself. Confirmed empirically
+(`test/test_tiledlayout_support.m`): a `TiledChartLayout`-hosted axes and a plain axes given the
+SAME `InnerPosition` and identical content produce byte-for-byte-identical `stats` and a 0-pixel-diff
+tagged SVG once both are routed through `runPillar1.m`.
 
 ## Identity-color matching: resolving the "two objects share a color" ambiguity (2026-08-29)
 
@@ -366,6 +377,65 @@ example of the intended calling convention. `test_group_tag.m` deliberately stil
 hand — it exercises pipeline internals in fine-grained detail and serves as the independent
 "ground truth" reference `test_run_pillar1.m`'s byte-identical comparison depends on, so collapsing it
 into `runPillar1.m` too would remove that independence.
+
+## The copy step: `runPillar1.m` now normalizes `ax` onto a shared standard canvas (2026-08-29)
+
+Seb's own design ask, same day: pillar 2's round-trip will need every panel `runPillar1.m` ever
+produces to live in ONE shared physical coordinate system with the eventual composed multi-panel
+figure, so that "the human resized/repositioned this panel inside the composed figure" can be read
+back directly as a new `ax.InnerPosition` fraction, with no scale-factor bookkeeping. Concretely:
+`runPillar1.m` now `copyobj`'s the caller's `ax` (never mutating it) into a fresh figure built on a
+fixed standard canvas (default US Letter portrait, `opts.canvasSize`/`opts.canvasUnits`) before doing
+anything else — every downstream step (snapshot, export, bake, identity export/bake, group/tag) runs
+against this copy, never the caller's own figure. `figId`/`panId` became compulsory arguments purely
+to name this copy's output files (`<figId>_<panId>_raw.svg` etc.) — embedding them into every tagged
+element's own `id`, which is what will actually be needed for safe multi-panel composition, is a
+DELIBERATELY DEFERRED later step (the composition/insertion step itself), not done here.
+
+**Empirical `copyobj` fidelity investigation, before trusting this design** (scratch scripts, no
+repo changes at the time): most properties survive `copyobj` untouched (`Tag`, `DisplayName`,
+`LineWidth`, `Color`, ad hoc `text()` annotations, `Legend.FontSize`) but two real gotchas:
+- **`copyobj(ax, newFig)` alone silently DROPS the Legend entirely** (`ax2.Legend` comes back empty)
+  — must copy axes and legend together: `copyobj([ax, ax.Legend], newFig)`.
+- **`XAxis`/`YAxis`/`XLabel`/`YLabel` `FontSize` are silently reset to auto-mode defaults by
+  `copyobj`**, regardless of the source's mode/value — must be captured from the original BEFORE
+  copying and re-applied explicitly afterward, RULERS BEFORE LABELS (same ordering rule as the
+  `XAxis.FontSize -> XLabel.FontSizeMode` reset gotcha documented above, since setting a ruler's
+  `FontSize` resets its own label's `FontSizeMode` back to auto if done afterward).
+- **`axis square`/`axis image` (`PlotBoxAspectRatioMode`/`DataAspectRatioMode='manual'`) survive the
+  copy and keep constraining the copy's drawn box**, even though `InnerPosition` itself is never
+  touched by them (MATLAB shrinks/centers the drawn box inside the unchanged `InnerPosition` rect
+  instead — measured directly: `axis image` squeezed a 316.8×172.8pt box down to 316.8×68.6pt).
+  Resetting both Modes to `'auto'` after the copy, then re-setting `InnerPosition`, fully restores the
+  undistorted box — confirmed empirically, no third property (`PlotBoxAspectRatio` value,
+  `CameraViewAngleMode`, etc.) needed.
+
+The resulting copy-step recipe, in order (see `copyAxesToStandardCanvas` inside `runPillar1.m`):
+capture `ax.InnerPosition` and the four ruler/label `FontSize` values from the ORIGINAL `ax` →
+`copyobj([ax, ax.Legend], fig2)` (or just `ax` if no Legend) → `ax2.PlotBoxAspectRatioMode='auto'`,
+`DataAspectRatioMode='auto'` → `ax2.InnerPosition = <captured>` → re-apply the four captured
+`FontSize` values, rulers then labels.
+
+**A second, unrelated bug this surfaced**: a US-Letter canvas is large enough that the already-
+documented `72/ScreenPixelsPerInch` export-rounding discrepancy (see above) exceeds the `<1pt`
+tolerance `identifyLegend.m`/`groupAndTagSvg.m`'s `identifyFurniture` used for recognizing the
+figure-background and axes-background rects (confirmed: this machine's `ScreenPixelsPerInch=95`, a
+non-round value; a Letter canvas's actual rendered background rect came out `[0 0 613.14 792.76]`pt
+against a declared/expected `[0 0 612 792]`pt — a ~1.14pt/0.76pt miss). This is NOT a
+`TiledChartLayout`-specific issue (reproduces identically for a plain axes at Letter size) — it's the
+existing 16×10cm test fixtures simply never having been big enough to hit it. Fixed by widening both
+tolerances to `1.5pt` (matching `identifyAxisSpine.m`'s own already-widened constant for the same
+underlying phenomenon), with an inline comment at both sites; the tight duplicate-rect-detection
+assert a few lines below (used to recognize MATLAB's own two-`<path>` legend-box duplication) was
+deliberately left untouched, since that comparison is between two paths drawn from the SAME baked
+document and stays exact regardless of canvas size.
+
+**Validated**: `test/test_run_pillar1.m` — byte-identical to the manual pipeline INCLUDING the copy
+step now (a from-scratch `manualCopyStep()` helper, not just the post-copy stages, or the comparison
+would silently stop being meaningful); `opts.canvasUnits`/`opts.canvasSize` override confirmed via
+the exported SVG's own declared canvas size; all prior default/keepIntermediates/zero-arg-call
+behavior re-verified unchanged. `test/test_tiledlayout_support.m` (new, permanent, supersedes the
+scratch validation script) — see the superseded-scope note above.
 
 ## Not yet investigated / open
 

@@ -395,14 +395,18 @@ function furn = identifyFurniture(doc, canvasSizePt, axesBoxPt)
 % own box, found via findClosedRectPaths.m -- shared with identifyLegend.m), plus every gridline
 % polyline (excluded from identifyAxisSpine.m's own spine/tick candidacy by the SAME opacity signal
 % -- gridlines are always drawn with a fractional stroke-opacity, confirmed in this repo's probe SVG).
+% bgTol=1.5pt -- see identifyLegend.m's own identical constant/comment: the 72/ScreenPixelsPerInch
+% rounding discrepancy scales with absolute canvas size and exceeds a 1pt tolerance on a US-Letter
+% canvas (2026-08-29).
+bgTol = 1.5;
 rects = findClosedRectPaths(doc);
 furn.figureBgNode = [];
 furn.axesBgNode = [];
 for i = 1:numel(rects)
     r = rects{i}.rect;
-    if all(abs(r - [0 0 canvasSizePt(1) canvasSizePt(2)]) < 1)
+    if all(abs(r - [0 0 canvasSizePt(1) canvasSizePt(2)]) < bgTol)
         furn.figureBgNode = rects{i}.node;
-    elseif all(abs(r - axesBoxPt) < 1)
+    elseif all(abs(r - axesBoxPt) < bgTol)
         furn.axesBgNode = rects{i}.node;
     end
 end
