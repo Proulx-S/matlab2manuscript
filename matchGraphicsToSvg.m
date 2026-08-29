@@ -13,12 +13,14 @@ function matches = matchGraphicsToSvg(snap, svgFile, identitySvgFile)
 %
 % (2) IDENTITY-COLOR cross-reference (used when identitySvgFile IS given -- see dumpIdentitySvg.m):
 %     look up each object's own shape in a THROWAWAY identity-colored export by its unique,
-%     collision-proof identity color (identityColorHex.m), then find the shape with that EXACT SAME
-%     geometry in the real svgFile (geometry is identical between the two exports since only color
-%     differs) -- so the real SVG's own colors never need to be unique at all. This is strictly more
-%     robust than (1): it resolves the Case B ambiguity above outright, since identity colors can
-%     never collide by construction. `groupAndTagSvg.m` always uses this path; (1) is kept only for
-%     backward compatibility / standalone use without an identity export.
+%     collision-proof identity color (computeIdentityColors.m -- encodes (seriesIndex, roleCode,
+%     occurrence), not just a bare index, so the SAME Tag-based pairing key groupAndTagSvg.m's
+%     'value'/'conf' sub-grouping uses is baked into the identity export too), then find the shape
+%     with that EXACT SAME geometry in the real svgFile (geometry is identical between the two
+%     exports since only color differs) -- so the real SVG's own colors never need to be unique at
+%     all. This is strictly more robust than (1): it resolves the Case B ambiguity above outright,
+%     since identity colors can never collide by construction. `groupAndTagSvg.m` always uses this
+%     path; (1) is kept only for backward compatibility / standalone use without an identity export.
 %
 % matches(i): svgTag ('polyline'|'path'), points (Nx2, SVG-space), node (the matched Java DOM
 % element itself -- kept live against the SAME doc used to build these matches, so a caller doing
@@ -47,6 +49,13 @@ if useIdentity
     end
     identityPolylines = identityDoc.getElementsByTagName('polyline');
     identityPaths = identityDoc.getElementsByTagName('path');
+    % computeIdentityColors.m encodes (seriesIndex, roleCode, occurrence) per object -- the SAME
+    % Tag-based pairing key assignSeriesIndices.m/groupAndTagSvg.m use for 'value'/'conf' grouping
+    % (Seb's own ask 2026-08-29, "pairing-by-identity": Tag replaces the previous DisplayName-based
+    % key, see assignSeriesIndices.m's own header for why) -- computed ONCE here, shared by
+    % dumpIdentitySvg.m (which assigned these exact colors before export) so the two can never
+    % silently disagree.
+    identityHexList = computeIdentityColors(snap);
 end
 
 matches = repmat(struct('svgTag','', 'points',[], 'node',[], 'candidateCountBeforeTiebreak',0), numel(snap), 1);
@@ -74,7 +83,7 @@ for i = 1:numel(snap)
     end
 
     if useIdentity
-        idHex = identityColorHex(i);
+        idHex = identityHexList{i};
         if strcmp(s.type,'line')
             idCands = findByStrokeHex(identityPolylines, idHex);
         else

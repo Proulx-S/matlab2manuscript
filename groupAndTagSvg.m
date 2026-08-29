@@ -43,9 +43,11 @@ function stats = groupAndTagSvg(ax, snap, bakedSvgFile, taggedSvgFile, identityB
 % nFurnitureGridlines, nAnnotations) so a caller can sanity-check nothing was silently skipped.
 %
 % Known, deliberately out-of-scope gaps (tracked, not silently accepted -- see docs/findings.md):
-% `ax.Box='on'` not handled (identifyAxisSpine.m errors loudly); a Line+error-band Patch is paired
-% into one series (and therefore one 'value'/'conf' pair) by DisplayName equality only, no more
-% explicit project convention exists yet; multi-legend/multi-axes figures out of scope.
+% `ax.Box='on'` not handled (identifyAxisSpine.m errors loudly); multi-legend/multi-axes figures out
+% of scope. (A Line+error-band Patch used to be paired into one series by DisplayName equality only
+% -- REVISED 2026-08-29, see assignSeriesIndices.m: now uses `Tag`, an explicit, non-display property
+% meant for exactly this, since two unrelated series can legitimately/accidentally share a
+% DisplayName.)
 
 doc = xmlread(bakedSvgFile);
 canvasSizePt = getCanvasSizeFromDoc(doc);
@@ -225,8 +227,9 @@ for role = {'title','xlabel','ylabel'}
     stats.nAxisLabels = stats.nAxisLabels + 1;
 end
 
-% --- data series (+ associated error, linked by shared DisplayName), each split into its own
-% 'value' (the Line) and 'conf' (the confidence-interval/error-band Patch) sub-group -- per Seb's
+% --- data series (+ associated error, linked by shared Tag -- see assignSeriesIndices.m), each
+% split into its own 'value' (the Line) and 'conf' (the confidence-interval/error-band Patch)
+% sub-group -- per Seb's
 % own ask 2026-08-29, docs/grouping-hierarchy.csv. ---
 if ~isempty(dataMembers)
     dataG = newGroup(doc, 'dataseries', 'dataseries');
@@ -234,14 +237,35 @@ if ~isempty(dataMembers)
     seriesGroupOf = containers.Map('KeyType','double','ValueType','any');
     valueGroupOf = containers.Map('KeyType','double','ValueType','any');
     confGroupOf = containers.Map('KeyType','double','ValueType','any');
+
+    % One shared slug per SERIES (not per snap(i)) -- since pairing is now by Tag, not DisplayName,
+    % a series' own Patch member commonly has NO DisplayName at all (only the Line, which is what
+    % appears in the legend, needs one). Using each member's OWN displayName independently would
+    % otherwise give a series' Line and Patch leaves inconsistent ids (e.g. "...-signal-line" next
+    % to "...-series1-fill") -- computed as a precompute pass so it's the same regardless of which
+    % member happens to be processed first.
+    seriesDisplayNameOf = containers.Map('KeyType','double','ValueType','char');
     for i = 1:numel(snap)
         if isempty(matches(i).node); continue; end
         si = seriesIndexOf(i);
-        slug = slugify(snap(i).displayName, sprintf('series%d',si));
+        if ~isKey(seriesDisplayNameOf, si) && ~isempty(snap(i).displayName)
+            seriesDisplayNameOf(si) = snap(i).displayName;
+        end
+    end
+
+    for i = 1:numel(snap)
+        if isempty(matches(i).node); continue; end
+        si = seriesIndexOf(i);
+        if isKey(seriesDisplayNameOf, si)
+            dn = seriesDisplayNameOf(si);
+        else
+            dn = '';
+        end
+        slug = slugify(dn, sprintf('series%d',si));
         if ~isKey(seriesGroupOf, si)
             sg = newGroup(doc, sprintf('dataseries-%d-%s',si,slug), 'series');
             sg.setAttribute('data-series-index', num2str(si));
-            if ~isempty(snap(i).displayName); sg.setAttribute('data-display-name', snap(i).displayName); end
+            if ~isempty(dn); sg.setAttribute('data-display-name', dn); end
             dataG.appendChild(sg);
             seriesGroupOf(si) = sg;
         end
@@ -366,21 +390,6 @@ for k = 0:texts.getLength()-1
             'more than one <text> (outside already-claimed nodes) matches content "%s" -- cannot disambiguate.', content);
         node = n;
     end
-end
-end
-
-function idx = assignSeriesIndices(snap)
-idx = zeros(numel(snap),1);
-keyToIdx = containers.Map('KeyType','char','ValueType','double');
-nextIdx = 0;
-for i = 1:numel(snap)
-    key = snap(i).displayName;
-    if isempty(key); key = sprintf('__unnamed_%d__', i); end
-    if ~isKey(keyToIdx, key)
-        nextIdx = nextIdx + 1;
-        keyToIdx(key) = nextIdx;
-    end
-    idx(i) = keyToIdx(key);
 end
 end
 

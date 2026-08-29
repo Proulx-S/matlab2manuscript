@@ -259,9 +259,52 @@ both paths coexist, `identitySvgFile` is an optional third argument, so the orig
 already-validated real-color-only behavior is unchanged when it's omitted. `groupAndTagSvg.m` now
 always supplies one.
 
-**Scope note**: this fixes SVG-identity-matching robustness, not the SEPARATE Line+Patch
-DisplayName-based series-pairing question (still open, see below) — identity colors tell you
-"this exact shape is object *i*," not "object *i* and object *j* are the same logical series."
+**Scope note**: the above fixes SVG-identity-matching robustness, not the SEPARATE Line+Patch
+series-pairing question — identity colors alone tell you "this exact shape is object *i*," not
+"object *i* and object *j* are the same logical series." That's a different signal, addressed next.
+
+## Pairing-by-identity: `Tag`, not `DisplayName`, decides which objects are one series (2026-08-29)
+
+Seb's own direct follow-up ask, same day: extend the identity mechanism above to also fix Line+Patch
+series pairing, which previously grouped objects by `DisplayName` equality — genuinely fragile, since
+`DisplayName` is meant for what a human reads in the legend, and two unrelated series sharing one
+(legitimately or by accident) would silently merge into a single series that was never meant to be
+linked.
+
+Considered encoding `(seriesIndex, roleCode)` directly into the identity-color channel as the sole
+source of truth for pairing, so decoding a shape's color alone would reveal series/role — but this
+turned out to be unnecessary complexity: `matchGraphicsToSvg.m` always has live `snap` (hence live
+`Tag`/`DisplayName`) available at matching time, so there is no scenario here where pairing must be
+recovered FROM the SVG alone (unlike shape identity, which genuinely can't be recovered from the real
+SVG's own colors when they collide). Re-deriving it via color would just be re-encoding something
+already directly available.
+
+**What was actually built**: `assignSeriesIndices.m` (extracted from `groupAndTagSvg.m`'s own local
+function into a shared file) now keys on `Tag` instead of `DisplayName` — same grouping logic, same
+"no Tag = its own standalone series" fallback, different (more appropriate) property. The identity-
+color scheme (`computeIdentityColors.m`/`seriesRoleColorHex.m`) DOES still encode `(seriesIndex,
+roleCode, occurrence)` rather than a bare sequential index, though — not because matching needs it,
+but so `dumpIdentitySvg.m`'s color assignment and `groupAndTagSvg.m`'s own grouping decision are
+provably derived from the exact same `assignSeriesIndices.m` call, rather than being two independent
+computations that could silently drift apart. `identityColorHex.m` (the original bare-index scheme
+from the same-day identity-matching work above) was deleted, superseded before it ever shipped.
+
+**A real, independent bug surfaced fixing this**: once the Patch no longer needs a `DisplayName` to
+pair with its Line (the whole point), a series' Line and Patch leaves could end up with inconsistent
+ids -- e.g. `dataseries-1-signal-line` next to `dataseries-1-series1-fill` -- since each object's own
+id slug was derived independently from ITS OWN (possibly empty) `DisplayName`. Fixed by computing one
+shared slug per SERIES (preferring any member's non-empty `DisplayName`, falling back to `series<n>`
+only if none exists across the whole series) in a precompute pass, before building any ids.
+
+**Validated**: `test_pairing.m`, three cases — (1) two objects sharing a `DisplayName` but different
+`Tag`s stay separate series (the exact fragility being fixed); (2) two objects sharing a `Tag`, one
+with no `DisplayName` at all, still pair correctly (the normal confidence-band case now that pairing
+doesn't need `DisplayName`); (3) two entirely untagged objects don't accidentally merge via an empty-
+string key collision. `test_group_tag.m`/`examples/makeExamplePanelA.m`'s own confidence-band Patch
+now carries no `DisplayName` at all (previously shared one with the Line) specifically to prove
+pairing survives without it — full pipeline re-verified: 0 pixel-diff, no duplicate ids, all other
+tests unaffected. `DisplayName` is still used correctly elsewhere for what it's actually for --
+`identifyLegend.m` matches legend text by `DisplayName` because that's literally the string shown.
 
 ## Not yet investigated / open
 
@@ -273,9 +316,10 @@ DisplayName-based series-pairing question (still open, see below) — identity c
   `openfig` round-trip, which this tool does not yet use or reproduce.
 - `ax.Box='on'` (mirrored top/right spine lines) is not handled by `identifyAxisSpine.m` yet --
   errors loudly rather than silently mishandling it.
-- Line+error-band pairing into one "series" uses `DisplayName` equality only -- no project
-  convention exists yet for a more explicit link (e.g. a shared `Tag` suffix); revisit if/when one
-  is established in `humanMouse`.
+- Line+error-band pairing into one "series" now uses `Tag` equality (`assignSeriesIndices.m`,
+  RESOLVED 2026-08-29 -- see this file's own "Pairing-by-identity" section above); no `humanMouse`
+  convention establishes what `Tag` a real project's Line/Patch pair should share yet, so a real
+  caller still has to set matching `Tag`s itself for now.
 - An ad hoc `text()` annotation (e.g. `plotVessels.m`'s own vessel-ID corner label, drawn via
   `drawIdCornerBox`) is now folded into `furniture > annotations > annotation-{k}` (Seb's own ask,
   2026-08-29 -- see this file's own note above for the paint-order tradeoff this involves and how it

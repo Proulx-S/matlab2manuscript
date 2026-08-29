@@ -46,8 +46,8 @@ this pipeline is its own, later, independent step, out of scope until then.
   vessel-ID corner label) aren't covered yet — those fall back to the scaled-and-rounded value.
   Extend this registry (or get explicit sign-off that a given case is fine to leave) before
   treating font-size handling as done.
-- `snapshotAxesStyle.m` / `matchGraphicsToSvg.m` / `dumpIdentitySvg.m` / `identityColorHex.m` — the
-  data-series matcher, with two strategies:
+- `snapshotAxesStyle.m` / `matchGraphicsToSvg.m` / `dumpIdentitySvg.m` — the data-series matcher,
+  with two strategies:
   1. **Real-color fingerprint** (the original approach): captures each live Line/Patch's color/style
      "recipe" before export, then matches it to its SVG counterpart by exact color, with a
      point-count check as a loud (never silent) tie-breaker/failure signal. Genuinely unresolvable
@@ -55,12 +55,14 @@ this pipeline is its own, later, independent step, out of scope until then.
      `test_edge_cases.m` Case B) — errors loudly rather than guessing.
   2. **Identity-color cross-reference** (2026-08-29, `groupAndTagSvg.m`'s own default): resolves
      that ambiguity outright. `dumpIdentitySvg.m` exports a throwaway copy of the figure with every
-     object temporarily given a unique, collision-proof "identity color" (`identityColorHex.m`:
-     index *i* → `#000000+i`), real colors restored before returning. `matchGraphicsToSvg.m` then
-     finds each object's shape in that identity export by its unique color (never ambiguous by
-     construction), and cross-references it into the REAL export by matching its exact geometry
-     (identical between the two exports, since only color differs) — so the real SVG's own colors
-     never need to be unique at all. See `test_edge_cases.m` Case D and `docs/findings.md`.
+     object temporarily given a unique, collision-proof "identity color" (`computeIdentityColors.m`/
+     `seriesRoleColorHex.m`: encodes `(seriesIndex, roleCode, occurrence)` directly, not just a bare
+     index — see `assignSeriesIndices.m` below), real colors restored before returning.
+     `matchGraphicsToSvg.m` then finds each object's shape in that identity export by its unique
+     color (never ambiguous by construction), and cross-references it into the REAL export by
+     matching its exact geometry (identical between the two exports, since only color differs) — so
+     the real SVG's own colors never need to be unique at all. See `test_edge_cases.m` Case D and
+     `docs/findings.md`.
 
   Both strategies also expose the matched Java DOM node itself (not just its points), for
   `groupAndTagSvg.m` below to tag directly. Validated on `humanMouse`'s real single-metric
@@ -88,15 +90,23 @@ this pipeline is its own, later, independent step, out of scope until then.
   detail.csv` has the same tree with full metadata (parent id, `data-role`, contents, cardinality,
   notes) for implementation reference — edit the outline first, the detail file gets reconciled by
   hand afterward.
+- `assignSeriesIndices.m` — groups `snapshotAxesStyle.m` entries into logical series (e.g. a Line +
+  its own confidence-band Patch) by shared `Tag`. **Revised 2026-08-29** ("pairing-by-identity",
+  Seb's own ask) from keying on `DisplayName`: two unrelated series can legitimately/accidentally
+  share a display string (a real risk, not hypothetical — see `test_pairing.m`), whereas `Tag` is the
+  MATLAB property meant for exactly this kind of internal/programmatic linking, not display.
+  `DisplayName` is still used correctly elsewhere for what it's actually for — `identifyLegend.m`
+  matches legend text by `DisplayName` because that's literally what a human reads there.
 - `groupAndTagSvg.m` — the grouping/tagging pipeline step itself: orchestrates the primitives above
   and restructures the DOM into real nested `<g id="..." data-role="...">` containers for four
   top-level roles — **furniture** (figure/axes background, gridlines, AND any leftover/unclaimed
   element such as an ad hoc `text()` annotation, folded in per Seb's own ask 2026-08-29 — see that
   section's own comment for the real paint-order tradeoff this involves), **axis-spine** (spine
   lines, one sub-`<g>` per tick pairing its mark+label together, axis labels), **dataseries** (each
-  series split into its own `value`/Line and `conf`/error-band-Patch sub-group), **legend** (box, one
-  sub-`<g>` per entry pairing its swatch+label together). See `docs/grouping-hierarchy.csv` for the
-  full, current hierarchy spec (an editable outline — the intended way to propose a change).
+  series, per `assignSeriesIndices.m` above, split into its own `value`/Line and `conf`/error-band-
+  Patch sub-group), **legend** (box, one sub-`<g>` per entry pairing its swatch+label together). See
+  `docs/grouping-hierarchy.csv` for the full, current hierarchy spec (an editable outline — the
+  intended way to propose a change).
 
   **Revised 2026-08-28** from this file's first version, which only stamped attributes onto existing
   leaf elements without moving anything (reasoning that relocating nodes risked changing paint
@@ -157,9 +167,9 @@ deliberately out-of-scope gaps (tracked, not silently accepted): `TiledChartLayo
 (i.e. `plotVessels.m` and anything like it) are not supported — adapting an arbitrary MATLAB figure
 down to a plain single-axes figure is its own, later, independent step; an ad hoc `text()`
 annotation's font-size still isn't covered by `dumpFontRegistry.m` (same known gap, for legend text
-and ad hoc labels); `ax.Box='on'` is not handled; a Line/Patch error-band pairing uses `DisplayName`
-equality only (no project convention exists yet for a more explicit
-link); multi-legend/multi-axes figures are out of scope (single-axes-per-figure panel only).
+and ad hoc labels); `ax.Box='on'` is not handled; multi-legend/multi-axes figures are out of scope
+(single-axes-per-figure panel only). (Line/Patch error-band pairing previously used `DisplayName`
+equality only — REVISED 2026-08-29, now uses `Tag`, see `assignSeriesIndices.m`.)
 
 Pillar 2 (the mm-based resize round-trip: harvest a human's SVG edit to the spine → feed back into
 MATLAB → regenerate everything else around it → re-place) is designed and spot-verified (MATLAB

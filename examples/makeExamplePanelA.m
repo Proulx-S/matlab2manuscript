@@ -43,14 +43,16 @@ hold(ax, 'on');
 
 x = 0:0.5:20;
 y = 5 + 0.3*sin(2*pi*x/5);
-% confidence band (Patch) FIRST, same DisplayName as the line below so groupAndTagSvg.m's own
-% DisplayName-based pairing puts them in the same series' 'value'/'conf' sub-groups. Keep it
-% default-visible (NOT HandleVisibility='off' -- that would also hide it from
-% snapshotAxesStyle.m's own findobj(ax,'Type','patch') call, not just from legend()) and instead
-% pass legend() an explicit handle list to keep it out of the legend without hiding it from findobj.
+% confidence band (Patch) FIRST, SAME Tag as the line below (NOT DisplayName -- see
+% assignSeriesIndices.m, "pairing-by-identity", Seb's own ask 2026-08-29) so groupAndTagSvg.m's own
+% Tag-based pairing puts them in the same series' 'value'/'conf' sub-groups. Deliberately gives the
+% patch NO DisplayName at all, to demonstrate pairing survives without one. Keep it default-visible
+% (NOT HandleVisibility='off' -- that would also hide it from snapshotAxesStyle.m's own
+% findobj(ax,'Type','patch') call, not just from legend()) and instead pass legend() an explicit
+% handle list to keep it out of the legend without hiding it from findobj.
 patchH = patch(ax, [x fliplr(x)], [y+0.15 fliplr(y-0.15)], [0.9 0.7 0.1], ...
-    'FaceAlpha', 0.2, 'EdgeColor', 'none', 'DisplayName', 'signal'); %#ok<NASGU>
-lineH = plot(ax, x, y, 'Color',[0.9 0.7 0.1], 'LineWidth', 2, 'DisplayName', 'signal');
+    'FaceAlpha', 0.2, 'EdgeColor', 'none', 'Tag', 'signal-series'); %#ok<NASGU>
+lineH = plot(ax, x, y, 'Color',[0.9 0.7 0.1], 'LineWidth', 2, 'DisplayName', 'signal', 'Tag', 'signal-series');
 ax.XLabel.String = 'time (s)';
 ax.YLabel.String = 'signal';   % deliberately the SAME string as the legend's own DisplayName below,
                                 % to keep exercising the real content-collision case this pipeline

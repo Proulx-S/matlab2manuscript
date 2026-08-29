@@ -23,11 +23,11 @@ axis-title,axis-labels,axis-label,title text,0 or 1,only if ax.Title.String is n
 axis-xlabel,axis-labels,axis-label,xlabel text,0 or 1,only if ax.XLabel.String is non-empty
 axis-ylabel,axis-labels,axis-label,ylabel text,0 or 1,only if ax.YLabel.String is non-empty
 dataseries,,dataseries,(container only),0 or 1,only created if at least one Line/Patch matched
-dataseries-{i}-{slug},dataseries,series,(container only),1 per data series,slug is the DisplayName (or series{i} if unset); {i} shared by a Line+Patch pair with the SAME DisplayName
+dataseries-{i}-{slug},dataseries,series,(container only),1 per data series,"{i} shared by a Line+Patch pair with the SAME Tag (assignSeriesIndices.m, not DisplayName -- revised 2026-08-29); slug is any member's DisplayName if one exists (or series{i} if none do)"
 dataseries-{i}-{slug}-value,dataseries-{i}-{slug},dataseries-value,(container only),1 if this series has a Line,holds the Line leaf -- 'value' = the data itself
 dataseries-{i}-{slug}-line,dataseries-{i}-{slug}-value,dataseries-line,the Line's own polyline,1 if this series has a Line,
-dataseries-{i}-{slug}-conf,dataseries-{i}-{slug},dataseries-conf,(container only),1 if this series has a same-DisplayName Patch,holds the Patch leaf -- 'conf' = the confidence interval / error band
-dataseries-{i}-{slug}-fill,dataseries-{i}-{slug}-conf,dataseries-fill,the Patch/error-band path,1 if this series has a same-DisplayName Patch,
+dataseries-{i}-{slug}-conf,dataseries-{i}-{slug},dataseries-conf,(container only),1 if this series has a same-Tag Patch,holds the Patch leaf -- 'conf' = the confidence interval / error band
+dataseries-{i}-{slug}-fill,dataseries-{i}-{slug}-conf,dataseries-fill,the Patch/error-band path,1 if this series has a same-Tag Patch,
 legend,,legend,(container only),0 or 1,only created if a live Legend object exists
 legend-box,legend,legend-box,(container only),1,
 legend-box-bg,legend-box,legend-box-bg,legend background rect,1,
