@@ -1,27 +1,50 @@
-% NOTE: this test deliberately validates groupAndTagSvg.m (+ identifyAxisSpine.m/identifyLegend.m)
-% against a REAL plotting function (plotVessels.m) from a real consuming project (humanMouse), with
-% a legend ON, so the DisplayName-content-collision case (this repo's own probe SVG has a legend
-% entry AND a y-axis label that are both literally "radius") is actually exercised, not hypothetical.
-% Adjust workDir if humanMouse lives elsewhere on this machine.
-workDir = '/scratch/bass/projects/humanMouse';
-addpath(genpath(fullfile(workDir,'vesselFit')));
-addpath(genpath(fullfile(workDir,'humanVessel')));
+% NOTE: this test validates groupAndTagSvg.m (+ identifyAxisSpine.m/identifyLegend.m) against a
+% PLAIN, hand-built single-axes figure -- deliberately NOT plotVessels.m anymore (2026-08-29 policy
+% change, see docs/findings.md's own note): plotVessels.m always hosts its axes inside a
+% TiledChartLayout (even for one panel), and this repo has decided NOT to accommodate that for now
+% -- adapting an arbitrary MATLAB figure down to a plain single-axes figure suitable for this
+% pipeline is its own, later, independent step. This synthetic figure is built to exercise every
+% role groupAndTagSvg.m tags: axis-spine (+ticks+labels), a data series, a legend, gridlines, and one
+% ad hoc annotation (a stand-in for something like plotVessels.m's own vessel-ID corner label) to
+% exercise the leftover/catch-all path.
 repoDir = fileparts(fileparts(mfilename('fullpath')));
 addpath(repoDir);
 outDir = fullfile(fileparts(mfilename('fullpath')), 'out');
 if ~exist(outDir,'dir'); mkdir(outDir); end
 
-t = (0:0.1:20)';
-vessel = struct();
-vessel.tsImMotionCorrected.gaussVascPhys.radius = 5 + 0.3*sin(2*pi*t/5)' + 0.02*randn(1,numel(t));
-vessel.dt = 0.1;
+fig = figure('Visible','off');
+fig.Units = 'centimeters';
+fig.Position = [2 2 16 10];
+fig.PaperUnits = 'centimeters';
+fig.PaperSize = [16 10];
+fig.PaperPositionMode = 'manual';
+fig.PaperPosition = [0 0 16 10];
 
-fig = plotVessels(vessel, 'tsImMotionCorrected.gaussVascPhys.radius', struct('legendVerbose',1));
-ax = findobj(fig,'Type','axes'); ax = ax(1);
-fprintf('ax.Box=%s, ax.Title.String="%s", ax.XLabel.String="%s", ax.YLabel.String="%s"\n', ...
-    ax.Box, char(ax.Title.String), char(ax.XLabel.String), char(ax.YLabel.String));
+ax = axes(fig);
+ax.Units = 'normalized';
+ax.PositionConstraint = 'innerposition';
+ax.InnerPosition = [0.15 0.15 0.7 0.7];
+ax.Box = 'off';
+grid(ax, 'on');
+hold(ax, 'on');
+
+x = 0:0.5:20;
+y = 5 + 0.3*sin(2*pi*x/5);
+plot(ax, x, y, 'Color',[0.9 0.7 0.1], 'LineWidth', 2, 'DisplayName', 'signal');
+ax.XLabel.String = 'time (s)';
+ax.YLabel.String = 'signal';   % deliberately the SAME string as the legend's own DisplayName below,
+                                % to keep exercising the real content-collision case this pipeline
+                                % must resolve (confirmed real on plotVessels.m's own "radius" panel)
+legend(ax, 'Location','northeast');   % picks up the Line's own DisplayName='signal' set above
+text(ax, 0.02, 0.95, 'panel A', 'Units','normalized', 'FontWeight','bold');   % ad hoc annotation
+drawnow;
+
+fprintf('ax.Box=%s, class(ax.Parent)=%s, ax.XLabel.String="%s", ax.YLabel.String="%s"\n', ...
+    ax.Box, class(ax.Parent), char(ax.XLabel.String), char(ax.YLabel.String));
 
 snap = snapshotAxesStyle(ax);
+nXTicksExpected = numel(ax.XAxis.TickLabels);
+nYTicksExpected = numel(ax.YAxis.TickLabels);
 
 rawFile = fullfile(outDir,'group_tag_raw.svg');
 print(fig, rawFile, '-dsvg','-vector');
@@ -39,14 +62,15 @@ fprintf('stats: nDataSeries=%d nLegendEntries=%d nXTicks=%d nYTicks=%d nAxisLabe
 
 assert(stats.nDataSeries == 1, 'expected exactly 1 tagged data series');
 assert(stats.nLegendEntries == 1, 'expected exactly 1 tagged legend entry');
-assert(stats.nXTicks == 11, 'expected 11 x-ticks (0:2:20)');
-assert(stats.nYTicks == 7, 'expected 7 y-ticks');
-% ax.Title.String is empty for this real panel (the top text seen in this repo's own probe SVG is a
-% separate whole-figure title/annotation, not ax.Title -- not this tool's concern yet) -- only
-% xlabel+ylabel are real ax-level labels here.
-assert(stats.nAxisLabels == 2, 'expected xlabel+ylabel tagged (2, ax.Title.String is empty for this panel)');
-assert(stats.nFurnitureGridlines == 18, 'expected 18 gridlines (11 vertical + 7 horizontal)');
-assert(stats.nAnnotations == 2, 'expected 2 leftover annotations (whole-figure title-ish text + vessel-ID corner label)');
+% Compared against LIVE tick-label counts, never a hardcoded literal -- even for this deterministic
+% plain-axes figure, MATLAB's own auto-tick-placement is an implementation detail this test
+% shouldn't need to predict by hand.
+assert(stats.nXTicks == nXTicksExpected, 'expected %d x-ticks (from live ax.XAxis.TickLabels)', nXTicksExpected);
+assert(stats.nYTicks == nYTicksExpected, 'expected %d y-ticks (from live ax.YAxis.TickLabels)', nYTicksExpected);
+assert(stats.nAxisLabels == 2, 'expected xlabel+ylabel tagged (2, no ax.Title set on this panel)');
+assert(stats.nFurnitureGridlines == nXTicksExpected + nYTicksExpected, ...
+    'expected %d gridlines (one per tick, both axes)', nXTicksExpected + nYTicksExpected);
+assert(stats.nAnnotations == 1, 'expected exactly 1 leftover annotation (the ad hoc "panel A" text)');
 
 % --- element-count invariant: grouping/tagging must never add/remove/duplicate a rendering-bearing
 % element -- only <g> wrapper counts should change (new semantic groups added, now-empty original
@@ -97,16 +121,17 @@ assert(hasTestParentId(tick1Mark,'axis-tick-x-1') && hasTestParentId(tick1Label,
 assert(hasTestAncestorId(tick1Mark,'axis-ticks-x') && hasTestAncestorId(tick1Mark,'axis-spine'), ...
     'x-tick 1 not nested under axis-ticks-x/axis-spine');
 
-tick7yMark = findTestById(docTagged,'axis-tick-y-7-mark');
-tick7yLabel = findTestById(docTagged,'axis-ticklabel-y-7');
-assert(hasTestParentId(tick7yMark,'axis-tick-y-7') && hasTestParentId(tick7yLabel,'axis-tick-y-7'), ...
-    'y-tick 7''s mark and label are not grouped together');
+lastY = nYTicksExpected;
+tickLastYMark = findTestById(docTagged, sprintf('axis-tick-y-%d-mark',lastY));
+tickLastYLabel = findTestById(docTagged, sprintf('axis-ticklabel-y-%d',lastY));
+assert(hasTestParentId(tickLastYMark, sprintf('axis-tick-y-%d',lastY)) && hasTestParentId(tickLastYLabel, sprintf('axis-tick-y-%d',lastY)), ...
+    'last y-tick''s mark and label are not grouped together');
 
 xlabelNode = findTestById(docTagged,'axis-xlabel');
 assert(hasTestParentId(xlabelNode,'axis-labels') && hasTestAncestorId(xlabelNode,'axis-spine'), ...
     'axis-xlabel not nested under axis-labels/axis-spine');
 
-dataNode = findTestById(docTagged,'dataseries-1-radius');
+dataNode = findTestById(docTagged,'dataseries-1-signal-line');
 assert(hasTestAncestorId(dataNode,'dataseries'), 'data series line not nested under top-level dataseries group');
 
 swatchNode = findTestById(docTagged,'legend-swatch-1');
@@ -125,12 +150,12 @@ assert(hasTestParentId(gridline1,'gridlines') && hasTestAncestorId(gridline1,'fu
 fprintf('all nesting relationships verified\n');
 
 % the legend-label text and the ylabel text must be DIFFERENT nodes despite identical content
-% ("radius" in both, confirmed in this repo's own probe.svg) -- the collision is resolved correctly
-% iff they're two distinct elements landing in two different groups (already implied by the nesting
+% ("signal" in both, deliberately set that way above) -- the collision is resolved correctly iff
+% they're two distinct elements landing in two different groups (already implied by the nesting
 % checks above, spelled out explicitly here too).
 ylabelNode = findTestById(docTagged,'axis-ylabel');
 assert(~ylabelNode.isSameNode(labelNode), 'ylabel and legend-label collapsed onto the same element -- collision not resolved');
-fprintf('ylabel/legend-label "radius" collision correctly resolved to distinct elements\n');
+fprintf('ylabel/legend-label "signal" collision correctly resolved to distinct elements\n');
 
 % --- visual-regression check: grouping/tagging is DOM surgery (relocating real elements), unlike
 % this file's first (attribute-only, never-move-anything) version -- rasterize both the un-grouped
@@ -172,13 +197,22 @@ end
 end
 
 function node = findTestById(doc, id)
+% Asserts EXACTLY one match, not just "at least one" -- a document-order-first search here once
+% silently masked a real duplicate-id bug (a series group and its own line-only leaf briefly shared
+% one id; this always found the group, since getElementsByTagName('*') visits a parent before its
+% children, and the group trivially satisfied every "has ancestor" check the test was written to
+% verify). SVG ids must be document-unique; this check enforces that as a byproduct.
 all = doc.getElementsByTagName('*');
 node = [];
+nMatches = 0;
 for k = 0:all.getLength()-1
     n = all.item(k);
-    if strcmp(char(n.getAttribute('id')), id); node = n; return; end
+    if strcmp(char(n.getAttribute('id')), id)
+        nMatches = nMatches + 1;
+        if isempty(node); node = n; end
+    end
 end
-assert(~isempty(node), 'findTestById: no element with id="%s" found', id);
+assert(nMatches == 1, 'findTestById: expected exactly 1 element with id="%s", found %d', id, nMatches);
 end
 
 function tf = hasTestParentId(node, parentId)

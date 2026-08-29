@@ -208,7 +208,13 @@ if ~isempty(dataMembers)
             dataG.appendChild(sg);
             seriesGroupOf(si) = sg;
         end
-        role = 'dataseries-line'; suffix = '';
+        % suffix is REQUIRED even for the common (line-only, no error-band) case -- without one, a
+        % line-only series' leaf would get the exact same id as its own parent "series" group
+        % (both "dataseries-<i>-<slug>"), an invalid duplicate id (confirmed real: caught by
+        % inspecting this repo's own generated output, not by the tests -- findTestById's own
+        % document-order search silently returned the GROUP instead of the intended leaf, since
+        % getElementsByTagName('*') visits a parent before its children).
+        role = 'dataseries-line'; suffix = '-line';
         if strcmp(snap(i).type,'patch'); role = 'dataseries-fill'; suffix = '-fill'; end
         relocateLeaf(matches(i).node, seriesGroupOf(si));
         slug = slugify(snap(i).displayName, sprintf('series%d',si));
