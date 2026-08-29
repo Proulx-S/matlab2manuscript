@@ -5,6 +5,11 @@
 %   panelA.svg            bakeTransforms.py output -- transforms flattened into plain attributes
 %   panelA_tagged.svg     groupAndTagSvg.m output -- real nested <g id=.../data-role=...> groups
 %
+% Also writes panelA_identity_raw.svg/panelA_identity.svg -- dumpIdentitySvg.m's own throwaway,
+% identity-colored export (+ its own bake) used internally for robust data-series matching (see
+% matchGraphicsToSvg.m). Not one of the four artifacts above; kept on disk only for inspecting the
+% matching mechanism itself, never meant to be a real deliverable.
+%
 % Deliberately a hand-built plain axes, NOT plotVessels.m (2026-08-29 policy change, see
 % docs/findings.md): plotVessels.m always hosts its axes inside a TiledChartLayout (even for one
 % panel), and this repo has decided not to accommodate that for now -- adapting an arbitrary MATLAB
@@ -38,14 +43,16 @@ hold(ax, 'on');
 
 x = 0:0.5:20;
 y = 5 + 0.3*sin(2*pi*x/5);
-% confidence band (Patch) FIRST, same DisplayName as the line below so groupAndTagSvg.m's own
-% DisplayName-based pairing puts them in the same series' 'value'/'conf' sub-groups. Keep it
-% default-visible (NOT HandleVisibility='off' -- that would also hide it from
-% snapshotAxesStyle.m's own findobj(ax,'Type','patch') call, not just from legend()) and instead
-% pass legend() an explicit handle list to keep it out of the legend without hiding it from findobj.
+% confidence band (Patch) FIRST, SAME Tag as the line below (NOT DisplayName -- see
+% assignSeriesIndices.m, "pairing-by-identity", Seb's own ask 2026-08-29) so groupAndTagSvg.m's own
+% Tag-based pairing puts them in the same series' 'value'/'conf' sub-groups. Deliberately gives the
+% patch NO DisplayName at all, to demonstrate pairing survives without one. Keep it default-visible
+% (NOT HandleVisibility='off' -- that would also hide it from snapshotAxesStyle.m's own
+% findobj(ax,'Type','patch') call, not just from legend()) and instead pass legend() an explicit
+% handle list to keep it out of the legend without hiding it from findobj.
 patchH = patch(ax, [x fliplr(x)], [y+0.15 fliplr(y-0.15)], [0.9 0.7 0.1], ...
-    'FaceAlpha', 0.2, 'EdgeColor', 'none', 'DisplayName', 'signal'); %#ok<NASGU>
-lineH = plot(ax, x, y, 'Color',[0.9 0.7 0.1], 'LineWidth', 2, 'DisplayName', 'signal');
+    'FaceAlpha', 0.2, 'EdgeColor', 'none', 'Tag', 'signal-series'); %#ok<NASGU>
+lineH = plot(ax, x, y, 'Color',[0.9 0.7 0.1], 'LineWidth', 2, 'DisplayName', 'signal', 'Tag', 'signal-series');
 ax.XLabel.String = 'time (s)';
 ax.YLabel.String = 'signal';   % deliberately the SAME string as the legend's own DisplayName below,
                                 % to keep exercising the real content-collision case this pipeline
@@ -65,8 +72,15 @@ print(fig, rawFile, '-dsvg','-vector');
 bakedFile = fullfile(outDir,'panelA.svg');
 system(sprintf('python3 %s %s %s', fullfile(fileparts(repoDir),'bakeTransforms.py'), rawFile, bakedFile));
 
+% Identity-colored export (dumpIdentitySvg.m) + bake -- robust, collision-proof data-series matching
+% (see matchGraphicsToSvg.m/docs/findings.md) instead of real-color fingerprinting.
+identityRawFile = fullfile(outDir,'panelA_identity_raw.svg');
+dumpIdentitySvg(fig, snap, identityRawFile);
+identityBakedFile = fullfile(outDir,'panelA_identity.svg');
+system(sprintf('python3 %s %s %s', fullfile(fileparts(repoDir),'bakeTransforms.py'), identityRawFile, identityBakedFile));
+
 taggedFile = fullfile(outDir,'panelA_tagged.svg');
-stats = groupAndTagSvg(ax, snap, bakedFile, taggedFile); %#ok<NASGU>
+stats = groupAndTagSvg(ax, snap, bakedFile, taggedFile, identityBakedFile); %#ok<NASGU>
 close(fig);
 
 fprintf('Wrote:\n  %s\n  %s\n  %s\n  %s\n', figFile, rawFile, bakedFile, taggedFile);

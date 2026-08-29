@@ -30,15 +30,17 @@ hold(ax, 'on');
 
 x = 0:0.5:20;
 y = 5 + 0.3*sin(2*pi*x/5);
-% confidence band (Patch) FIRST, same DisplayName as the line below so groupAndTagSvg.m's own
-% DisplayName-based pairing puts them in the same series' 'value'/'conf' sub-groups. NOTE:
-% HandleVisibility='off' would ALSO hide it from snapshotAxesStyle.m's own findobj(ax,'Type','patch')
-% call, not just from legend() (confirmed real -- an earlier version of this test used it and the
-% patch silently never got captured/matched/tagged at all) -- keep it default-visible and instead
-% pass legend() an explicit handle list to keep it out of the legend without hiding it from findobj.
+% confidence band (Patch) FIRST, SAME Tag as the line below (NOT DisplayName -- see
+% assignSeriesIndices.m, "pairing-by-identity", Seb's own ask 2026-08-29) so groupAndTagSvg.m's own
+% Tag-based pairing puts them in the same series' 'value'/'conf' sub-groups. Deliberately gives the
+% patch NO DisplayName at all, to prove pairing survives without one. NOTE: HandleVisibility='off'
+% would ALSO hide it from snapshotAxesStyle.m's own findobj(ax,'Type','patch') call, not just from
+% legend() (confirmed real -- an earlier version of this test used it and the patch silently never
+% got captured/matched/tagged at all) -- keep it default-visible and instead pass legend() an
+% explicit handle list to keep it out of the legend without hiding it from findobj.
 patchH = patch(ax, [x fliplr(x)], [y+0.15 fliplr(y-0.15)], [0.9 0.7 0.1], ...
-    'FaceAlpha', 0.2, 'EdgeColor', 'none', 'DisplayName', 'signal'); %#ok<NASGU>
-lineH = plot(ax, x, y, 'Color',[0.9 0.7 0.1], 'LineWidth', 2, 'DisplayName', 'signal');
+    'FaceAlpha', 0.2, 'EdgeColor', 'none', 'Tag', 'signal-series'); %#ok<NASGU>
+lineH = plot(ax, x, y, 'Color',[0.9 0.7 0.1], 'LineWidth', 2, 'DisplayName', 'signal', 'Tag', 'signal-series');
 ax.XLabel.String = 'time (s)';
 ax.YLabel.String = 'signal';   % deliberately the SAME string as the legend's own DisplayName below,
                                 % to keep exercising the real content-collision case this pipeline
@@ -60,8 +62,16 @@ print(fig, rawFile, '-dsvg','-vector');
 bakedFile = fullfile(outDir,'group_tag_baked.svg');
 system(sprintf('python3 %s %s %s', fullfile(repoDir,'bakeTransforms.py'), rawFile, bakedFile));
 
+% Identity-colored export (dumpIdentitySvg.m) + bake -- used for robust, collision-proof data-series
+% matching (matchGraphicsToSvg.m's identity-color cross-reference path) instead of real-color
+% fingerprinting. No font registry needed here: only geometry/color matter for this throwaway file.
+identityRawFile = fullfile(outDir,'group_tag_identity_raw.svg');
+dumpIdentitySvg(fig, snap, identityRawFile);
+identityBakedFile = fullfile(outDir,'group_tag_identity_baked.svg');
+system(sprintf('python3 %s %s %s', fullfile(repoDir,'bakeTransforms.py'), identityRawFile, identityBakedFile));
+
 taggedFile = fullfile(outDir,'group_tag_tagged.svg');
-stats = groupAndTagSvg(ax, snap, bakedFile, taggedFile);
+stats = groupAndTagSvg(ax, snap, bakedFile, taggedFile, identityBakedFile);
 close(fig);   % safe to close now -- groupAndTagSvg only needed the live ax/fig up to this point
 
 fprintf('stats: nDataSeries=%d nLegendEntries=%d nXTicks=%d nYTicks=%d nAxisLabels=%d nFurnitureGridlines=%d nAnnotations=%d\n', ...

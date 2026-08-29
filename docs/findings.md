@@ -221,6 +221,91 @@ hand-built `axes()` instead of `plotVessels.m` for anything touching `identifyAx
 registry tests (`test_match_prototype.m`/`test_edge_cases.m`/`test_registry_rotation.m`), which
 don't touch axis-spine identification and aren't affected by this.
 
+## Identity-color matching: resolving the "two objects share a color" ambiguity (2026-08-29)
+
+The real-color style-fingerprint matcher (`matchGraphicsToSvg.m`, `docs` above) has one genuine,
+unresolvable-by-design gap: if two Line/Patch objects share BOTH the same real color AND the same
+point count, nothing in the SVG distinguishes them — confirmed real, `test_edge_cases.m` Case B,
+correctly errors loudly (`ambiguousMatch`) rather than guessing. Seb's own proposal, discussed before
+building it: render a second, disposable copy of the same figure where every object gets a unique,
+deliberately-arbitrary "identity color" instead of its real one (the "ID buffer"/"color picking"
+technique from graphics engines: render a hidden pass with flat unique colors per object so a color
+read-back always identifies the object unambiguously, no matter its real appearance) — then use that
+disposable export purely as a lookup key into the real one.
+
+**Why this works cleanly for SVG specifically** (unlike the rasterized-image version of this
+technique): SVG `fill`/`stroke` attribute values are exact text in the markup, never blended/
+rasterized, so there is no antialiasing risk the way there would be reading back pixels from a
+rendered image — adjacent identity values like `#000001`/`#000002` are exactly as reliable as
+maximally-different colors would be.
+
+**Implementation**: `identityColorHex.m` is the single shared encoding (index *i* → `#000000+i`,
+both a hex string and a `[0,1]` RGB triple) that `dumpIdentitySvg.m` (assigns colors, exports,
+restores real colors) and `matchGraphicsToSvg.m` (looks them up) both rely on to agree. Colors are
+restored via an explicit try/catch around the whole recolor+export sequence, not `onCleanup` — an
+`onCleanup` closure captures its captured variables' VALUES at creation time, so creating it before
+the loop that populates the restore-function list would have captured an eternally-empty list (a
+real bug caught before it shipped, not hypothetical).
+
+`matchGraphicsToSvg.m`'s new identity path: for object *i*, find the identity-colored export's own
+shape by EXACT color `identityColorHex(i)` (unambiguous by construction — unlike the real-color path,
+more than one candidate here can only mean the SAME object's shape was split by an axis-clip boundary,
+never a different object, since identity colors never collide), then find the shape with that EXACT
+SAME geometry in the real export (identical between the two exports, since only color differs) — so
+the real SVG's own colors are never consulted for this at all. Validated: `test_edge_cases.m` Case D
+reproduces Case B's exact "same color, same point count" scenario and confirms it resolves correctly
+with an identity SVG present, where Case B itself (no identity SVG) still correctly errors loudly —
+both paths coexist, `identitySvgFile` is an optional third argument, so the original,
+already-validated real-color-only behavior is unchanged when it's omitted. `groupAndTagSvg.m` now
+always supplies one.
+
+**Scope note**: the above fixes SVG-identity-matching robustness, not the SEPARATE Line+Patch
+series-pairing question — identity colors alone tell you "this exact shape is object *i*," not
+"object *i* and object *j* are the same logical series." That's a different signal, addressed next.
+
+## Pairing-by-identity: `Tag`, not `DisplayName`, decides which objects are one series (2026-08-29)
+
+Seb's own direct follow-up ask, same day: extend the identity mechanism above to also fix Line+Patch
+series pairing, which previously grouped objects by `DisplayName` equality — genuinely fragile, since
+`DisplayName` is meant for what a human reads in the legend, and two unrelated series sharing one
+(legitimately or by accident) would silently merge into a single series that was never meant to be
+linked.
+
+Considered encoding `(seriesIndex, roleCode)` directly into the identity-color channel as the sole
+source of truth for pairing, so decoding a shape's color alone would reveal series/role — but this
+turned out to be unnecessary complexity: `matchGraphicsToSvg.m` always has live `snap` (hence live
+`Tag`/`DisplayName`) available at matching time, so there is no scenario here where pairing must be
+recovered FROM the SVG alone (unlike shape identity, which genuinely can't be recovered from the real
+SVG's own colors when they collide). Re-deriving it via color would just be re-encoding something
+already directly available.
+
+**What was actually built**: `assignSeriesIndices.m` (extracted from `groupAndTagSvg.m`'s own local
+function into a shared file) now keys on `Tag` instead of `DisplayName` — same grouping logic, same
+"no Tag = its own standalone series" fallback, different (more appropriate) property. The identity-
+color scheme (`computeIdentityColors.m`/`seriesRoleColorHex.m`) DOES still encode `(seriesIndex,
+roleCode, occurrence)` rather than a bare sequential index, though — not because matching needs it,
+but so `dumpIdentitySvg.m`'s color assignment and `groupAndTagSvg.m`'s own grouping decision are
+provably derived from the exact same `assignSeriesIndices.m` call, rather than being two independent
+computations that could silently drift apart. `identityColorHex.m` (the original bare-index scheme
+from the same-day identity-matching work above) was deleted, superseded before it ever shipped.
+
+**A real, independent bug surfaced fixing this**: once the Patch no longer needs a `DisplayName` to
+pair with its Line (the whole point), a series' Line and Patch leaves could end up with inconsistent
+ids -- e.g. `dataseries-1-signal-line` next to `dataseries-1-series1-fill` -- since each object's own
+id slug was derived independently from ITS OWN (possibly empty) `DisplayName`. Fixed by computing one
+shared slug per SERIES (preferring any member's non-empty `DisplayName`, falling back to `series<n>`
+only if none exists across the whole series) in a precompute pass, before building any ids.
+
+**Validated**: `test_pairing.m`, three cases — (1) two objects sharing a `DisplayName` but different
+`Tag`s stay separate series (the exact fragility being fixed); (2) two objects sharing a `Tag`, one
+with no `DisplayName` at all, still pair correctly (the normal confidence-band case now that pairing
+doesn't need `DisplayName`); (3) two entirely untagged objects don't accidentally merge via an empty-
+string key collision. `test_group_tag.m`/`examples/makeExamplePanelA.m`'s own confidence-band Patch
+now carries no `DisplayName` at all (previously shared one with the Line) specifically to prove
+pairing survives without it — full pipeline re-verified: 0 pixel-diff, no duplicate ids, all other
+tests unaffected. `DisplayName` is still used correctly elsewhere for what it's actually for --
+`identifyLegend.m` matches legend text by `DisplayName` because that's literally the string shown.
+
 ## Not yet investigated / open
 
 - The `ScreenPixelsPerInch`-dependent bug documented in the OLD `humanMouse` engine
@@ -231,9 +316,10 @@ don't touch axis-spine identification and aren't affected by this.
   `openfig` round-trip, which this tool does not yet use or reproduce.
 - `ax.Box='on'` (mirrored top/right spine lines) is not handled by `identifyAxisSpine.m` yet --
   errors loudly rather than silently mishandling it.
-- Line+error-band pairing into one "series" uses `DisplayName` equality only -- no project
-  convention exists yet for a more explicit link (e.g. a shared `Tag` suffix); revisit if/when one
-  is established in `humanMouse`.
+- Line+error-band pairing into one "series" now uses `Tag` equality (`assignSeriesIndices.m`,
+  RESOLVED 2026-08-29 -- see this file's own "Pairing-by-identity" section above); no `humanMouse`
+  convention establishes what `Tag` a real project's Line/Patch pair should share yet, so a real
+  caller still has to set matching `Tag`s itself for now.
 - An ad hoc `text()` annotation (e.g. `plotVessels.m`'s own vessel-ID corner label, drawn via
   `drawIdCornerBox`) is now folded into `furniture > annotations > annotation-{k}` (Seb's own ask,
   2026-08-29 -- see this file's own note above for the paint-order tradeoff this involves and how it
