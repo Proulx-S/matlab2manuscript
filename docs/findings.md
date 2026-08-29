@@ -48,7 +48,27 @@ MATLAB's raw (pre-transform) font-size attribute is rounded to the nearest **int
 internal representation before the `72/ScreenPixelsPerInch` scale is applied — e.g. requesting
 `FontSize=14` can export as `18 × 0.757895 = 13.6421`. Bounded at `±0.5×s` regardless of target
 size (~0.38pt here). Not fixable by baking math; fixed instead by overriding with the authoritative
-live MATLAB value (see `dumpFontRegistry.m`) rather than trusting the exported number.
+live MATLAB value.
+
+**How that override is done changed 2026-08-29** (a real, not hypothetical, correctness bug found
+extending it): the original approach (`dumpFontRegistry.m`, removed) dumped a flat `{content:
+fontSize}` JSON registry BEFORE export, keyed purely by text content, consulted by
+`bakeTransforms.py` while baking. This is fundamentally ambiguous once more than
+title/xlabel/ylabel/tick-labels are covered — legend text and ad hoc annotations both routinely
+share content with SOMETHING else (this repo's own validation panel has a y-axis label and a legend
+label that are both literally `"signal"`), and a flat dict can only hold one value per key.
+Correction now happens in `groupAndTagSvg.m` instead, AFTER each text node's role is already known
+unambiguously from its own identification mechanism (position/content-restricted-to-a-narrow-box/
+elimination — never a second, unrestricted content lookup): title/xlabel/ylabel/tick-labels/legend-
+labels are corrected by reading the matching `ax`/`Legend` property DIRECTLY (no matching needed at
+all, since which property to read is already determined by the role); only an ad hoc annotation still
+needs content-matching, but against a small set already narrowed to "still-live text() objects that
+aren't title/xlabel/ylabel" — the exact same "restrict first, then match content" discipline
+`identifyLegend.m` already used. `bakeTransforms.py` itself now always writes the geometrically-
+scaled (uncorrected) value; it no longer accepts a registry argument at all. Validated:
+`test/test_fontsize_correction.m` gives all 6 roles distinct font sizes (including the exact
+`"signal"`/`"signal"` collision above, with DIFFERENT sizes on each) and confirms every one resolves
+to its own exact, correct value.
 
 ## Transform baking is compulsory, not optional, for the round-trip
 
@@ -86,6 +106,13 @@ the SVG spec's own `rotate()` → `matrix(cos,sin,-sin,cos,0,0)` expansion).
 - `FontSize` (and other axes properties) can be silently **reset to default and `FontSizeMode`
   flipped back to `'auto'`** the moment a plotting command (`plot()`) runs on axes with no prior
   children — set such properties *after* the first plot call, not before.
+- **A second, separate `FontSize`/`FontSizeMode` reset gotcha (2026-08-29), NOT the same as the one
+  above**: setting `ax.XAxis.FontSize` (or `ax.YAxis.FontSize`) resets `ax.XLabel.FontSizeMode` (or
+  `ax.YLabel.FontSizeMode`) back to `'auto'`, silently reverting any `ax.XLabel.FontSize` already
+  set to `ax.XAxis.FontSize * ax.LabelFontSizeMultiplier` (default `1.1`) instead. Confirmed real by
+  hitting it directly in `test/test_fontsize_correction.m`'s own setup (set labels before rulers,
+  got `XLabel.FontSize=9.9` instead of the requested `16`) — order matters: set
+  `XAxis`/`YAxis.FontSize` FIRST, then `XLabel`/`YLabel.FontSize` after, not the reverse.
 
 ## The axis-spine identification pass, and end-to-end grouping/tagging (2026-08-28)
 
@@ -217,9 +244,9 @@ not) down to a plain single-axes figure suitable for this pipeline is its own, l
 step — not something to build reactively into `identifyAxisSpine.m`'s own tolerances. This repo's
 own tests/examples (`test/test_group_tag.m`, `examples/makeExamplePanelA.m`) now use a plain,
 hand-built `axes()` instead of `plotVessels.m` for anything touching `identifyAxisSpine.m`/
-`groupAndTagSvg.m` — `plotVessels.m` is still used for the style-fingerprint matching and font-
-registry tests (`test_match_prototype.m`/`test_edge_cases.m`/`test_registry_rotation.m`), which
-don't touch axis-spine identification and aren't affected by this.
+`groupAndTagSvg.m` — `plotVessels.m` is still used for the style-fingerprint matching tests
+(`test_match_prototype.m`/`test_edge_cases.m`), which don't touch axis-spine identification and
+aren't affected by this.
 
 ## Identity-color matching: resolving the "two objects share a color" ambiguity (2026-08-29)
 
@@ -323,9 +350,9 @@ tests unaffected. `DisplayName` is still used correctly elsewhere for what it's 
 - An ad hoc `text()` annotation (e.g. `plotVessels.m`'s own vessel-ID corner label, drawn via
   `drawIdCornerBox`) is now folded into `furniture > annotations > annotation-{k}` (Seb's own ask,
   2026-08-29 -- see this file's own note above for the paint-order tradeoff this involves and how it
-  was measured). Its font-size is still NOT covered by `dumpFontRegistry.m` -- same known,
-  deliberately tracked gap (neither an axis label, tick label, data series, nor legend entry as
-  defined there).
+  was measured). Its font-size IS now corrected (RESOLVED 2026-08-29, see this file's own "Font-size
+  rounding" section above) whenever exactly one still-live ad hoc `text()` object shares its exact
+  content; `stats.nAnnotationFontSizeUnresolved` tracks the (rare, non-silent) case where it isn't.
 - `TiledChartLayout`-hosted axes (i.e. `plotVessels.m` and anything like it) are explicitly out of
   scope -- see this file's own note above. Adapting an arbitrary MATLAB figure (tiled or not) down
   to a plain single-axes figure suitable for this pipeline is its own, later, independent step.

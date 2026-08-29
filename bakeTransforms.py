@@ -10,11 +10,19 @@ chain into ONE single matrix set directly on that <text> element itself (still e
 multi-level nesting) rather than trying to re-derive a clean rotate()+baked-font-size form -- kept
 deliberately simple and verified by raster comparison, not by trusting the decomposition algebra.
 Non-rotated text (the common case) is fully baked (x/y/font-size as plain numbers, no transform).
+
+Font-size here is ALWAYS the geometrically-scaled value, uncorrected -- carries MATLAB's own
+confirmed sub-point rounding artifact (docs/findings.md). REVISED 2026-08-29: this file used to
+accept an optional font_registry (dumpFontRegistry.m's JSON output) to correct it here, keyed by
+exact text content -- removed because that key is fundamentally ambiguous once more than
+title/xlabel/ylabel/tick-labels are covered (two different ROLES, e.g. a legend label and a y-axis
+label, can share identical text with genuinely different font sizes -- a real risk, not
+hypothetical, on this repo's own validation panel). Correction now happens in groupAndTagSvg.m
+instead, AFTER each text node's role is already known unambiguously.
 """
 import sys
 import re
 import math
-import json
 import xml.etree.ElementTree as ET
 
 NS_SVG = 'http://www.w3.org/2000/svg'
@@ -91,22 +99,20 @@ def transform_path_d(d_str, t):
             parts.append(f'{c}{x:.10g},{y:.10g}')
     return ' '.join(parts)
 
-def lookup_font_size(elem, s, font_registry, stats):
-    """Authoritative FontSize from the live MATLAB text object, keyed by exact string content --
-    sidesteps the confirmed sub-point rounding in MATLAB's own exported font-size arithmetic
-    entirely, rather than trying to reverse-engineer/compensate for it. Falls back to the
-    geometrically-scaled value (with a loud count, not a silent guess) when no registry is given or
-    the content isn't found -- e.g. a legend entry or other text this registry doesn't cover yet."""
-    content = ''.join(elem.itertext()).strip()
-    if font_registry is not None and content in font_registry:
-        stats['text_fontsize_from_registry'] += 1
-        return font_registry[content]
-    if 'font-size' in elem.attrib:
-        stats['text_fontsize_fallback_scaled'] += 1
-        return float(elem.attrib['font-size']) * s
-    return None
+def scaled_font_size(elem, s, stats):
+    """The geometrically-scaled font-size -- carries MATLAB's own confirmed sub-point rounding
+    artifact (a requested FontSize=14 can export as e.g. 13.6421; see docs/findings.md) uncorrected.
+    REVISED 2026-08-29: this file no longer tries to correct it here at all (the previous
+    content-keyed font_registry mechanism was removed -- it had a real collision risk once extended
+    past title/xlabel/ylabel/tick-labels: two different ROLES, e.g. a legend label and a y-axis
+    label, can share the exact same text content with genuinely different font sizes, and a flat
+    content->fontSize dict can only hold one). Correction now happens in groupAndTagSvg.m instead,
+    AFTER each text node's role is already known unambiguously (from position/content/elimination,
+    not a second content-keyed lookup) -- see that file's own header and docs/findings.md."""
+    stats['text_fontsize_scaled'] += 1
+    return float(elem.attrib['font-size']) * s if 'font-size' in elem.attrib else None
 
-def bake(elem, accum, stats, font_registry=None):
+def bake(elem, accum, stats):
     tag = elem.tag.split('}')[-1]
     local = accum
     if 'transform' in elem.attrib:
@@ -115,7 +121,7 @@ def bake(elem, accum, stats, font_registry=None):
 
     if tag == 'text':
         s = scale_magnitude(local)
-        fs = lookup_font_size(elem, s, font_registry, stats)
+        fs = scaled_font_size(elem, s, stats)
         if is_pure_uniform_scale_translate(local):
             x = float(elem.attrib.get('x', 0)); y = float(elem.attrib.get('y', 0))
             nx, ny = apply_to_point(local, x, y)
@@ -139,7 +145,7 @@ def bake(elem, accum, stats, font_registry=None):
             elem.attrib['transform'] = f'rotate({angle_deg:.10g},{e:.10g},{f:.10g})'
             stats['text_rotated_clean'] += 1
         for child in list(elem):
-            bake(child, IDENTITY, stats, font_registry)  # tspans -- coords local to the text anchor
+            bake(child, IDENTITY, stats)  # tspans -- coords local to the text anchor
         return
 
     if not is_pure_uniform_scale_translate(local):
@@ -177,28 +183,17 @@ def bake(elem, accum, stats, font_registry=None):
         stats['image'] += 1
 
     for child in list(elem):
-        bake(child, local, stats, font_registry)
+        bake(child, local, stats)
 
-def load_font_registry(path):
-    """MATLAB's dumpFontRegistry.m output: array of {content, fontSize, role}. Keyed by exact
-    content string -- last-writer-wins on a genuine content collision (not expected in practice:
-    tick labels/title/x/ylabel strings don't normally coincide within one panel), not guessed at."""
-    with open(path) as fh:
-        entries = json.load(fh)
-    if isinstance(entries, dict):
-        entries = [entries]  # MATLAB's jsonencode collapses a 1-element struct array to a bare object
-    return {e['content']: e['fontSize'] for e in entries}
-
-def main(infile, outfile, registry_path=None):
+def main(infile, outfile):
     tree = ET.parse(infile)
     root = tree.getroot()
-    font_registry = load_font_registry(registry_path) if registry_path else None
     stats = {'stroke-width':0,'font-size':0,'polyline':0,'path':0,'circle':0,'text_baked':0,
-             'text_rotated_clean':0,'image':0,'text_fontsize_from_registry':0,'text_fontsize_fallback_scaled':0}
+             'text_rotated_clean':0,'image':0,'text_fontsize_scaled':0}
     for child in list(root):
-        bake(child, IDENTITY, stats, font_registry)
+        bake(child, IDENTITY, stats)
     tree.write(outfile, xml_declaration=True, encoding='UTF-8')
     print(f"Baked: {stats}")
 
 if __name__ == '__main__':
-    main(sys.argv[1], sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None)
+    main(sys.argv[1], sys.argv[2])

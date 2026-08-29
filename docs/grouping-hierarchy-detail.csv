@@ -10,14 +10,20 @@ axis-spine,,axis-spine,(container only),1,
 axis-spine-lines,axis-spine,spine-lines,(container only),1,
 axis-spine-x,axis-spine-lines,spine-line,bottom spine polyline,1,the long polyline spanning ax.InnerPosition's width
 axis-spine-y,axis-spine-lines,spine-line,left spine polyline,1,the long polyline spanning ax.InnerPosition's height
+axis-spine-x-mirror,axis-spine-lines,spine-line-mirror,top spine polyline,0 or 1,only exists if ax.Box='on' (2026-08-29)
+axis-spine-y-mirror,axis-spine-lines,spine-line-mirror,right spine polyline,0 or 1,only exists if ax.Box='on' (2026-08-29)
 axis-ticks-x,axis-spine,ticks,(container only),1,data-axis=x
 axis-tick-x-{n},axis-ticks-x,tick,(container only),1 per x tick,n is 1-indexed left to right
 axis-tick-x-{n}-mark,axis-tick-x-{n},tick-mark,tick mark polyline,1,
 axis-ticklabel-x-{n},axis-tick-x-{n},tick-label,tick label text,1,paired to its own tick mark by position order
+axis-ticks-x-mirror,axis-spine,ticks-mirror,(container only),0 or 1,only exists if ax.Box='on'; data-axis=x
+axis-tick-x-mirror-{n},axis-ticks-x-mirror,tick-mark-mirror,mirror tick mark polyline (top side),1 per x tick,"MATLAB never draws a mirror-side tick LABEL, confirmed empirically -- no label counterpart exists"
 axis-ticks-y,axis-spine,ticks,(container only),1,data-axis=y
 axis-tick-y-{n},axis-ticks-y,tick,(container only),1 per y tick,n is 1-indexed bottom to top
 axis-tick-y-{n}-mark,axis-tick-y-{n},tick-mark,tick mark polyline,1,
 axis-ticklabel-y-{n},axis-tick-y-{n},tick-label,tick label text,1,paired to its own tick mark by position order
+axis-ticks-y-mirror,axis-spine,ticks-mirror,(container only),0 or 1,only exists if ax.Box='on'; data-axis=y
+axis-tick-y-mirror-{n},axis-ticks-y-mirror,tick-mark-mirror,mirror tick mark polyline (right side),1 per y tick,"MATLAB never draws a mirror-side tick LABEL, confirmed empirically -- no label counterpart exists"
 axis-labels,axis-spine,axis-labels,(container only),1,
 axis-title,axis-labels,axis-label,title text,0 or 1,only if ax.Title.String is non-empty
 axis-xlabel,axis-labels,axis-label,xlabel text,0 or 1,only if ax.XLabel.String is non-empty

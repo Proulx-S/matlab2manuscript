@@ -184,14 +184,27 @@ fprintf('ylabel/legend-label "signal" collision correctly resolved to distinct e
 % baked file and the newly-grouped tagged file and pixel-diff them. Requires rsvg-convert + compare
 % (ImageMagick); skips (not fails) if either isn't on PATH, printing a warning rather than silently
 % passing.
+%
+% TEXT IS STRIPPED (stripTextForDiff.py) before rasterizing, both sides -- REVISED 2026-08-29:
+% groupAndTagSvg.m's font-size correction is a REAL, INTENTIONAL visual change (it fixes a genuine
+% MATLAB font-size rounding artifact, see docs/findings.md), so baked-vs-tagged is no longer expected
+% to be 0-diff for TEXT specifically (confirmed real: this check found ~1500 differing pixels the
+% first time font-size correction was added, entirely from corrected text glyphs, not a grouping
+% bug). This check only ever meant to guard the DOM-restructuring/grouping step itself, which is
+% unrelated to font-size -- text correctness has its own byte-exact check in
+% test_fontsize_correction.m instead.
 [hasRsvg,~] = system('which rsvg-convert');
 [hasCompare,~] = system('which compare');
 if hasRsvg == 0 && hasCompare == 0
+    bakedNoTextFile = fullfile(outDir,'group_tag_baked_notext.svg');
+    taggedNoTextFile = fullfile(outDir,'group_tag_tagged_notext.svg');
+    system(sprintf('python3 %s %s %s', fullfile(repoDir,'test','stripTextForDiff.py'), bakedFile, bakedNoTextFile));
+    system(sprintf('python3 %s %s %s', fullfile(repoDir,'test','stripTextForDiff.py'), taggedFile, taggedNoTextFile));
     bakedPng = fullfile(outDir,'group_tag_baked.png');
     taggedPng = fullfile(outDir,'group_tag_tagged.png');
     diffPng = fullfile(outDir,'group_tag_diff.png');
-    [s1,o1] = system(sprintf('rsvg-convert -o %s %s', bakedPng, bakedFile));
-    [s2,o2] = system(sprintf('rsvg-convert -o %s %s', taggedPng, taggedFile));
+    [s1,o1] = system(sprintf('rsvg-convert -o %s %s', bakedPng, bakedNoTextFile));
+    [s2,o2] = system(sprintf('rsvg-convert -o %s %s', taggedPng, taggedNoTextFile));
     assert(s1==0 && s2==0, 'rsvg-convert failed: %s / %s', o1, o2);
     % `compare -metric AE -fuzz 2%` prints the count of pixels differing by MORE than 2% to stderr
     % (captured via 2>&1) -- exits nonzero whenever ANY pixel differs at all, so the exit code alone
@@ -211,9 +224,9 @@ if hasRsvg == 0 && hasCompare == 0
     [~,cmpOut] = system(sprintf('compare -metric AE -fuzz 2%% %s %s %s 2>&1', bakedPng, taggedPng, diffPng));
     diffCount = str2double(strtrim(cmpOut));
     if isnan(diffCount); diffCount = Inf; end   % unparsable output -- treat as failure, don't silently pass
-    fprintf('pixel-diff (baked vs. grouped/tagged rendering, 2%% fuzz): %g differing pixels\n', diffCount);
-    assert(diffCount == 0, ['rendering changed after grouping/tagging: %g pixels differ by more than 2%% -- ' ...
-        'DOM restructuring must be visually inert.'], diffCount);
+    fprintf('pixel-diff (baked vs. grouped/tagged rendering, text stripped, 2%% fuzz): %g differing pixels\n', diffCount);
+    assert(diffCount == 0, ['rendering changed after grouping/tagging (text excluded): %g pixels differ by ' ...
+        'more than 2%% -- DOM restructuring must be visually inert.'], diffCount);
 else
     warning('test_group_tag:noRasterTools', 'rsvg-convert/compare not found on PATH -- skipping the visual-regression pixel-diff check.');
 end
