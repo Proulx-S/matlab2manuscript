@@ -1,22 +1,23 @@
-% makeExamplePanelA  Concrete, on-disk example of every artifact this repo's pipeline currently
-% produces for one PLAIN single-axes panel, for Seb to inspect directly:
-%   panelA.fig          the original MATLAB figure (savefig)
-%   panelA_raw.svg       straight print(-dsvg) export -- MATLAB's own transform="matrix(...)" intact
-%   panelA.svg            bakeTransforms.py output -- transforms flattened into plain attributes
-%   panelA_tagged.svg     groupAndTagSvg.m output -- real nested <g id=.../data-role=...> groups
-%
-% Also writes panelA_identity_raw.svg/panelA_identity.svg -- dumpIdentitySvg.m's own throwaway,
-% identity-colored export (+ its own bake) used internally for robust data-series matching (see
-% matchGraphicsToSvg.m). Not one of the four artifacts above; kept on disk only for inspecting the
-% matching mechanism itself, never meant to be a real deliverable.
+% makeExamplePanelA  Concrete, on-disk example of every artifact this repo's pillar-1 pipeline
+% currently produces for one PLAIN single-axes panel, for Seb to inspect directly. Runs the whole
+% pipeline through the single-function wrapper (runPillar1.m, 2026-08-29) with
+% opts.keepIntermediates=true, rather than calling each pipeline step by hand -- this IS the intended
+% way to run pillar 1 now, and using it here doubles as a live example of doing so:
+%   panelA.fig                the original MATLAB figure (savefig -- NOT part of runPillar1.m itself)
+%   panelA_raw.svg             straight print(-dsvg) export -- MATLAB's own transform="matrix(...)"
+%   panelA.svg                 bakeTransforms.py output -- transforms flattened into plain attributes
+%   panelA_identity_raw.svg    dumpIdentitySvg.m's own throwaway, identity-colored export
+%   panelA_identity.svg        the identity export, baked -- used internally for robust data-series
+%                              matching (matchGraphicsToSvg.m); not a real deliverable on its own
+%   panelA_tagged.svg          groupAndTagSvg.m output -- real nested <g id=.../data-role=...> groups
 %
 % Deliberately a hand-built plain axes, NOT plotVessels.m (2026-08-29 policy change, see
 % docs/findings.md): plotVessels.m always hosts its axes inside a TiledChartLayout (even for one
 % panel), and this repo has decided not to accommodate that for now -- adapting an arbitrary MATLAB
 % figure down to a plain single-axes figure suitable for this pipeline is its own, later,
 % independent step. Includes a confidence band (exercising the dataseries 'value'/'conf' sub-group
-% split) and an ad hoc annotation (folded into furniture -- see groupAndTagSvg.m's own comment).
-% Same synthetic panel used by test/test_group_tag.m.
+% split, paired by Tag not DisplayName) and an ad hoc annotation (folded into furniture -- see
+% groupAndTagSvg.m's own comment). Same synthetic panel used by test/test_group_tag.m.
 %
 % figure1.svg (a composed multi-panel figure with this panel inserted as a layer) is NOT produced --
 % that's pillar 2 (the mm-based resize round-trip / panel-insertion step), not yet built. See
@@ -61,26 +62,13 @@ legend(ax, lineH, 'Location','northeast');   % explicit handle -- only the line 
 text(ax, 0.02, 0.95, 'panel A', 'Units','normalized', 'FontWeight','bold');   % ad hoc annotation
 drawnow;
 
-snap = snapshotAxesStyle(ax);
-
 figFile = fullfile(outDir,'panelA.fig');
 savefig(fig, figFile);
 
-rawFile = fullfile(outDir,'panelA_raw.svg');
-print(fig, rawFile, '-dsvg','-vector');
-
-bakedFile = fullfile(outDir,'panelA.svg');
-system(sprintf('python3 %s %s %s', fullfile(fileparts(repoDir),'bakeTransforms.py'), rawFile, bakedFile));
-
-% Identity-colored export (dumpIdentitySvg.m) + bake -- robust, collision-proof data-series matching
-% (see matchGraphicsToSvg.m/docs/findings.md) instead of real-color fingerprinting.
-identityRawFile = fullfile(outDir,'panelA_identity_raw.svg');
-dumpIdentitySvg(fig, snap, identityRawFile);
-identityBakedFile = fullfile(outDir,'panelA_identity.svg');
-system(sprintf('python3 %s %s %s', fullfile(fileparts(repoDir),'bakeTransforms.py'), identityRawFile, identityBakedFile));
-
-taggedFile = fullfile(outDir,'panelA_tagged.svg');
-stats = groupAndTagSvg(ax, snap, bakedFile, taggedFile, identityBakedFile); %#ok<NASGU>
+result = runPillar1(ax, outDir, 'panelA', struct('keepIntermediates', true));
 close(fig);
 
-fprintf('Wrote:\n  %s\n  %s\n  %s\n  %s\n', figFile, rawFile, bakedFile, taggedFile);
+fprintf('Wrote:\n  %s\n  %s\n  %s\n  %s\n  %s\n  %s\n', figFile, ...
+    fullfile(outDir,'panelA_raw.svg'), fullfile(outDir,'panelA.svg'), ...
+    fullfile(outDir,'panelA_identity_raw.svg'), fullfile(outDir,'panelA_identity.svg'), ...
+    result.taggedFile);

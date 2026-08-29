@@ -333,6 +333,40 @@ pairing survives without it — full pipeline re-verified: 0 pixel-diff, no dupl
 tests unaffected. `DisplayName` is still used correctly elsewhere for what it's actually for --
 `identifyLegend.m` matches legend text by `DisplayName` because that's literally the string shown.
 
+## `runPillar1.m`: wrapping pillar 1 into a single function, intermediates cleaned by default (2026-08-29)
+
+Seb's own direct ask, same day: once pillar 1's individual steps (raw export, bake, identity export,
+identity bake, group/tag) were each independently solid, the natural next step was collapsing them
+into one call — `examples/makeExamplePanelA.m` had been hand-chaining all five steps since the very
+start of this pipeline, and every new caller would otherwise have to re-learn and re-chain the same
+five calls, including the easy-to-forget "bake the identity export too, not just the raw export" step.
+
+**What was built**: `runPillar1.m` — `result = runPillar1(ax, outDir, baseName, opts)` runs
+`snapshotAxesStyle` → `print(-dsvg)` → `bakeTransforms.py` → `dumpIdentitySvg.m` →
+`bakeTransforms.py` (again, on the identity export) → `groupAndTagSvg.m`, returning
+`result.taggedFile` (path to `<baseName>_tagged.svg`) and `result.stats` (passed through unchanged
+from `groupAndTagSvg.m`). The four intermediate files this needs along the way
+(`<baseName>_raw.svg`, `<baseName>.svg`, `<baseName>_identity_raw.svg`, `<baseName>_identity.svg`) are
+deleted once `groupAndTagSvg.m` has consumed them, by default — `opts.keepIntermediates=true` keeps
+them instead, using the exact naming convention `examples/makeExamplePanelA.m` had already established
+by hand. Follows the Bass-wide "self-populating default opts" convention (zero-arg call prints help
+text and returns a fully-populated default opts struct) since this is a new user-facing entry point —
+deliberately NOT applied to the internal helper functions it calls, consistent with the precedent set
+earlier for `groupAndTagSvg.m`/`identifyAxisSpine.m` etc., which aren't standalone entry points.
+
+**Validated** (`test/test_run_pillar1.m`): default call cleans up all 4 intermediates and produces the
+tagged SVG; `opts.keepIntermediates=true` keeps all 4; a from-scratch build of the same synthetic panel
+run through the manual step-by-step pipeline (independently, in the same test) produces a
+`fileread()`-BYTE-IDENTICAL tagged SVG and an `isequal`-identical `stats` struct compared to
+`runPillar1.m`'s own output — i.e. the wrapper is provably not just "close to" but exactly equivalent
+to calling every step by hand; zero-arg call returns a properly-populated default opts struct.
+`examples/makeExamplePanelA.m` rewritten to call `runPillar1.m` with `keepIntermediates=true` instead
+of hand-chaining the five steps, re-run and re-verified (6 output files, no duplicate ids) as a live
+example of the intended calling convention. `test_group_tag.m` deliberately still calls each step by
+hand — it exercises pipeline internals in fine-grained detail and serves as the independent
+"ground truth" reference `test_run_pillar1.m`'s byte-identical comparison depends on, so collapsing it
+into `runPillar1.m` too would remove that independence.
+
 ## Not yet investigated / open
 
 - The `ScreenPixelsPerInch`-dependent bug documented in the OLD `humanMouse` engine
