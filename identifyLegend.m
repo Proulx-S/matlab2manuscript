@@ -1,4 +1,4 @@
-function leg = identifyLegend(figOrAx, snap, doc, axesBoxPt, canvasSizePt)
+function leg = identifyLegend(figOrAx, snap, doc, axesBoxPt, canvasSizePt, excludeRects)
 % identifyLegend  Locate legend furniture (background/border box) and, per snapshotAxesStyle.m
 % entry, its own legend swatch + entry text -- in an ALREADY-BAKED svg. Uses the SAME two ground-
 % truth signals this repo already validated: exact style-fingerprint color (matchGraphicsToSvg.m)
@@ -14,6 +14,14 @@ function leg = identifyLegend(figOrAx, snap, doc, axesBoxPt, canvasSizePt)
 %                axes-background rect when hunting for the legend's own box
 % canvasSizePt   [width height] SVG canvas size (getCanvasSizeFromDoc.m) -- excluded as the figure-
 %                background rect
+% excludeRects   (optional, default {}) additional [x0 y0 x1 y1] rects to exclude, by CONTAINMENT
+%                (not exact match) -- e.g. a colorbar's own bbox (identifyColorbar.m's
+%                cbInfo.bboxPt): its own gradient box renders as exactly the same kind of
+%                closed-rect <path> findClosedRectPaths.m matches here (would otherwise be mistaken
+%                for a second legend-box candidate, confirmed real 2026-08-29), and MATLAB additionally
+%                draws several tiny (~0.5pt) decorative corner-cap rects at the colorbar's own
+%                corners (confirmed real, same date) that an EXACT-match exclusion would miss --
+%                excluding by containment-within-bboxPt catches both at once.
 %
 % Returns [] if no live Legend object exists on this figure (nothing to find, not an error).
 % Otherwise:
@@ -41,13 +49,21 @@ assert(isscalar(legHandles), 'identifyLegend:multipleLegends', ...
 % runPillar1.m copy-step default) confirmed a real ~1.14pt figure-background mismatch that a 1pt
 % tolerance rejected -- same family/magnitude as identifyAxisSpine.m's own already-widened 1.5pt tol.
 bgTol = 1.5;
+if nargin < 6 || isempty(excludeRects); excludeRects = {}; end
 rectPaths = findClosedRectPaths(doc);
 candBoxes = {};
 for i = 1:numel(rectPaths)
     r = rectPaths{i}.rect;
     isFigureBg = all(abs(r - [0 0 canvasSizePt(1) canvasSizePt(2)]) < bgTol);
     isAxesBg = all(abs(r - axesBoxPt) < bgTol);
-    if ~isFigureBg && ~isAxesBg
+    isExcluded = false;
+    for ei = 1:numel(excludeRects)
+        ex = excludeRects{ei};
+        if r(1) >= ex(1)-bgTol && r(2) >= ex(2)-bgTol && r(3) <= ex(3)+bgTol && r(4) <= ex(4)+bgTol
+            isExcluded = true; break
+        end
+    end
+    if ~isFigureBg && ~isAxesBg && ~isExcluded
         candBoxes{end+1} = rectPaths{i}; %#ok<AGROW>
     end
 end

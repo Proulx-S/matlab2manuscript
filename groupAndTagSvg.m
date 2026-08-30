@@ -1,12 +1,14 @@
 function stats = groupAndTagSvg(ax, snap, bakedSvgFile, taggedSvgFile, panId, identityBakedSvgFile)
 % groupAndTagSvg  The grouping/tagging half of this repo's round-trip pipeline (README pillar 1):
 % restructures an ALREADY-BAKED svg's DOM into real nested <g> containers -- full current hierarchy
-% in docs/grouping-hierarchy.csv (an editable outline; edit it to propose a change). Four top-level
+% in docs/grouping-hierarchy.csv (an editable outline; edit it to propose a change). Top-level
 % roles: furniture (figure/axes background, gridlines, AND any leftover/unclaimed element -- e.g. an
 % ad hoc `text()` annotation -- folded in per Seb's own ask, see that section's own comment for the
 % real paint-order tradeoff this involves), axis-spine (spine lines, per-tick mark+label pairs, axis
 % labels), dataseries (each series split into its own 'value'/Line and 'conf'/error-band-Patch
-% sub-group), legend (box, per-entry swatch+label). This gives a real SVG editor's own
+% sub-group), legend (box, per-entry swatch+label), colorbar (box, outline, per-tick mark+label
+% pairs, own label -- 2026-08-29, requires identityBakedSvgFile, see identifyColorbar.m). This gives
+% a real SVG editor's own
 % click-to-select/collapse behavior a usable hierarchy (select the whole axis-spine, or one tick's
 % mark+label together, in one click) instead of 60+ flat, one-element-each groups at the document
 % root.
@@ -50,11 +52,15 @@ function stats = groupAndTagSvg(ax, snap, bakedSvgFile, taggedSvgFile, panId, id
 %                that's otherwise genuinely unresolvable (see test_edge_cases.m Case B/D). Omit only
 %                for quick/standalone use where that ambiguity isn't a concern -- the caller is
 %                responsible for producing this file (dumpIdentitySvg.m + bake), mirroring how this
-%                function never bakes bakedSvgFile itself either.
+%                function never bakes bakedSvgFile itself either. ALSO REQUIRED (2026-08-29) if `ax`
+%                has a live Colorbar -- identifyColorbar.m's own identification mechanism depends on
+%                it entirely (no real-color fallback); omitting it when a Colorbar exists means the
+%                colorbar's elements fall through to the "annotations" catch-all instead of being
+%                properly tagged, not an error.
 %
 % stats: struct of counts (nDataSeries, nLegendEntries, nXTicks, nYTicks, nAxisLabels,
-% nFurnitureGridlines, nAnnotations, nAnnotationFontSizeUnresolved) so a caller can sanity-check
-% nothing was silently skipped. Every text role EXCEPT annotations gets its font-size corrected from
+% nFurnitureGridlines, nAnnotations, nAnnotationFontSizeUnresolved, nColorbarTicks) so a caller can
+% sanity-check nothing was silently skipped. Every text role EXCEPT annotations gets its font-size corrected from
 % a live ax/legend property directly (no content-matching risk at all, since which property to read
 % is already determined by the role itself); an annotation's font-size is corrected by content-
 % matching against the small set of still-live ad hoc text() objects, and nAnnotationFontSizeUnresolved
@@ -84,9 +90,28 @@ else
     matches = matchGraphicsToSvg(snap, doc);
 end
 spineInfo = identifyAxisSpine(ax, doc, canvasSizePt);
-legInfo = identifyLegend(ax, snap, doc, spineInfo.expectedBoxPt, canvasSizePt);
-xLabelNodes = matchTickLabels(doc, ax.XAxis.TickLabels, spineInfo.xTickNodes, 'x', spineInfo.expectedBoxPt);
-yLabelNodes = matchTickLabels(doc, ax.YAxis.TickLabels, spineInfo.yTickNodes, 'y', spineInfo.expectedBoxPt);
+% Colorbar identified BEFORE the legend -- its gradient box is exactly the same kind of closed-rect
+% <path> identifyLegend.m hunts for, and would otherwise be mistaken for a second legend-box
+% candidate (confirmed real, 2026-08-29) -- excluded from identifyLegend's own search below instead.
+if nargin >= 6 && ~isempty(identityBakedSvgFile)
+    cbInfo = identifyColorbar(ax, doc, xmlread(identityBakedSvgFile));
+else
+    cbInfo = [];
+end
+cbExcludeRects = {};
+cbExcludeText = {};
+if ~isempty(cbInfo)
+    cbExcludeRects = {cbInfo.bboxPt};
+    cbExcludeText = [cbInfo.tickLabelNodes(:)', {cbInfo.labelNode}];
+end
+legInfo = identifyLegend(ax, snap, doc, spineInfo.expectedBoxPt, canvasSizePt, cbExcludeRects);
+% cbExcludeText: a colorbar's own tick-label <text> can coincidentally share numeric CONTENT with an
+% axis tick label (e.g. both showing "0"), and -- since the colorbar spans the box's full height --
+% one of its tick labels can land within matchTickLabels' own generous "below/left of the box"
+% geometric window purely by y-coordinate coincidence (confirmed real, 2026-08-29) -- excluded here
+% the same way legend text already is (this function's own exclude-list discipline).
+xLabelNodes = matchTickLabels(doc, ax.XAxis.TickLabels, spineInfo.xTickNodes, 'x', spineInfo.expectedBoxPt, cbExcludeText);
+yLabelNodes = matchTickLabels(doc, ax.YAxis.TickLabels, spineInfo.yTickNodes, 'y', spineInfo.expectedBoxPt, cbExcludeText);
 furn = identifyFurniture(doc, canvasSizePt, spineInfo.expectedBoxPt);
 
 seriesIndexOf = assignSeriesIndices(snap);
@@ -99,6 +124,9 @@ if ~isempty(legInfo)
     for ei = 1:numel(legInfo.entries); excludeText{end+1} = legInfo.entries(ei).textNode; end %#ok<AGROW>
 end
 excludeText = [excludeText, xLabelNodes(:)', yLabelNodes(:)'];
+if ~isempty(cbInfo)
+    excludeText = [excludeText, cbInfo.tickLabelNodes(:)', {cbInfo.labelNode}];
+end
 texts = doc.getElementsByTagName('text');
 labelDefs = {'title',char(ax.Title.String); 'xlabel',char(ax.XLabel.String); 'ylabel',char(ax.YLabel.String)};
 axisLabelNode = struct('title',[],'xlabel',[],'ylabel',[]);
@@ -127,12 +155,21 @@ if ~isempty(legInfo)
         claimed{end+1} = legInfo.entries(ei).textNode; %#ok<AGROW>
     end
 end
+if ~isempty(cbInfo)
+    claimed = [claimed, {cbInfo.boxNode, cbInfo.labelNode}, cbInfo.outlineNodes(:)', ...
+        cbInfo.tickNodes(:)', cbInfo.tickLabelNodes(:)', cbInfo.decorationNodes(:)'];
+end
 annotationNodes = {};
 for tagName = {'polyline','path','text','circle','image'}
     els = doc.getElementsByTagName(tagName{1});
     for k = 0:els.getLength()-1
         n = els.item(k);
         if isNodeInList(n, claimed); continue; end
+        % A colorbar's (or, eventually, an image-dataseries') gradient/raster content is embedded
+        % as an <image> child of a <pattern> DEFINITION, not a directly-rendered element -- a bare
+        % getElementsByTagName('image') scan doesn't distinguish that from real content, so it was
+        % otherwise wrongly caught here as a "leftover" annotation (confirmed real, 2026-08-29).
+        if isDescendantOfTag(n, 'pattern'); continue; end
         annotationNodes{end+1} = n; %#ok<AGROW>
     end
 end
@@ -155,14 +192,20 @@ if ~isempty(legInfo)
         legendMembers{end+1} = legInfo.entries(ei).textNode; %#ok<AGROW>
     end
 end
+colorbarMembers = {};
+if ~isempty(cbInfo)
+    colorbarMembers = [{cbInfo.boxNode, cbInfo.labelNode}, cbInfo.outlineNodes(:)', ...
+        cbInfo.tickNodes(:)', cbInfo.tickLabelNodes(:)', cbInfo.decorationNodes(:)'];
+end
 
 anchorFurniture = earliestOriginalChild(root, furnitureMembers);
 anchorSpine = earliestOriginalChild(root, spineMembers);
 anchorData = earliestOriginalChild(root, dataMembers);
+anchorColorbar = earliestOriginalChild(root, colorbarMembers);
 anchorLegend = earliestOriginalChild(root, legendMembers);
 
 stats = struct('nDataSeries',0, 'nLegendEntries',0, 'nXTicks',0, 'nYTicks',0, 'nAxisLabels',0, ...
-    'nFurnitureGridlines',0, 'nAnnotations',0, 'nAnnotationFontSizeUnresolved',0);
+    'nFurnitureGridlines',0, 'nAnnotations',0, 'nAnnotationFontSizeUnresolved',0, 'nColorbarTicks',0);
 
 % --- furniture (+ annotations, folded in per Seb's own ask 2026-08-29) ---
 if ~isempty(furn.figureBgNode) || ~isempty(furn.axesBgNode) || ~isempty(furn.gridlineNodes) || ~isempty(annotationNodes)
@@ -394,6 +437,46 @@ if ~isempty(legInfo)
     end
 end
 
+% --- colorbar (box, outline, per-tick mark+label pairs, own label) -- 2026-08-29, see
+% identifyColorbar.m's own header for the identity-color mechanism this depends on. ---
+if ~isempty(cbInfo)
+    cbG = newGroup(doc, 'colorbar', 'colorbar');
+    insertAt(root, cbG, anchorColorbar);
+    relocateLeaf(cbInfo.boxNode, cbG); tagLeaf(cbInfo.boxNode, 'colorbar-box', 'colorbar-box');
+    outlineG = newGroup(doc, 'colorbar-outline', 'colorbar-outline');
+    cbG.appendChild(outlineG);
+    for oi = 1:numel(cbInfo.outlineNodes)
+        relocateLeaf(cbInfo.outlineNodes{oi}, outlineG);
+        tagLeaf(cbInfo.outlineNodes{oi}, sprintf('colorbar-outline-%d',oi), 'colorbar-outline-edge');
+    end
+    ticksG = newGroup(doc, 'colorbar-ticks', 'colorbar-ticks');
+    cbG.appendChild(ticksG);
+    for ti = 1:numel(cbInfo.tickNodes)
+        tickG = newGroup(doc, sprintf('colorbar-tick-%d',ti), 'colorbar-tick');
+        ticksG.appendChild(tickG);
+        relocateLeaf(cbInfo.tickNodes{ti}, tickG);
+        tagLeaf(cbInfo.tickNodes{ti}, sprintf('colorbar-tick-%d-mark',ti), 'colorbar-tick-mark');
+        if ti <= numel(cbInfo.tickLabelNodes) && ~isempty(cbInfo.tickLabelNodes{ti})
+            relocateLeaf(cbInfo.tickLabelNodes{ti}, tickG);
+            tagLeaf(cbInfo.tickLabelNodes{ti}, sprintf('colorbar-ticklabel-%d',ti), 'colorbar-tick-label');
+            setFontSizeFromLive(cbInfo.tickLabelNodes{ti}, ax.Colorbar.FontSize);
+        end
+    end
+    stats.nColorbarTicks = numel(cbInfo.tickNodes);
+    if ~isempty(cbInfo.decorationNodes)
+        decG = newGroup(doc, 'colorbar-decoration', 'colorbar-decoration');
+        cbG.appendChild(decG);
+        for di = 1:numel(cbInfo.decorationNodes)
+            relocateLeaf(cbInfo.decorationNodes{di}, decG);
+            tagLeaf(cbInfo.decorationNodes{di}, sprintf('colorbar-decoration-%d',di), 'colorbar-decoration');
+        end
+    end
+    if ~isempty(cbInfo.labelNode)
+        relocateLeaf(cbInfo.labelNode, cbG);
+        tagLeaf(cbInfo.labelNode, 'colorbar-label', 'colorbar-label');
+        setFontSizeFromLive(cbInfo.labelNode, ax.Colorbar.Label.FontSize);
+    end
+end
 
 pruneEmptyGroups(root);
 
@@ -451,17 +534,25 @@ for k = 0:polylines.getLength()-1
 end
 end
 
-function labelNodes = matchTickLabels(doc, tickLabelStrs, tickNodes, axisName, boxRect)
+function labelNodes = matchTickLabels(doc, tickLabelStrs, tickNodes, axisName, boxRect, excludeText)
 % Candidate <text> nodes: content is one of the live tick label strings (ground truth, from
 % ax.XAxis.TickLabels/ax.YAxis.TickLabels directly), AND positioned just outside the spine on the
 % expected side (below for x,
 % left for y) -- content alone risks a cross-axis collision, position alone has no exact distance to
 % anchor a threshold against, so both are required; loudly refuses to pair if the resulting count
 % doesn't match the tick marks.
+%
+% excludeText (optional, default {}): nodes to skip outright even if content+position both match --
+% e.g. a colorbar's own tick labels, which can coincidentally share numeric content with an axis
+% tick label AND land inside this function's own geometric window purely by coordinate coincidence
+% (confirmed real, 2026-08-29 -- the colorbar spans the box's full height, so one of its tick
+% labels landing within the "just below the box" window is a real, not hypothetical, collision).
+if nargin < 6 || isempty(excludeText); excludeText = {}; end
 texts = doc.getElementsByTagName('text');
 cands = {};
 for k = 0:texts.getLength()-1
     n = texts.item(k);
+    if isNodeInList(n, excludeText); continue; end
     content = strtrim(char(n.getTextContent()));
     if ~ismember(content, tickLabelStrs); continue; end
     x = str2double(char(n.getAttribute('x'))); y = str2double(char(n.getAttribute('y')));
@@ -635,6 +726,15 @@ n = node;
 tf = false;
 while ~isempty(n) && n.getNodeType() == n.ELEMENT_NODE
     if n.isSameNode(candidateAncestor); tf = true; return; end
+    n = n.getParentNode();
+end
+end
+
+function tf = isDescendantOfTag(node, tagName)
+n = node.getParentNode();
+tf = false;
+while ~isempty(n) && n.getNodeType() == n.ELEMENT_NODE
+    if strcmp(char(n.getTagName()), tagName); tf = true; return; end
     n = n.getParentNode();
 end
 end

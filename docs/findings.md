@@ -548,3 +548,99 @@ simulation doesn't catch. This is the next thing to close before trusting this l
 - `id` collisions across multiple panels in one composed manuscript figure -- RESOLVED 2026-08-29,
   see "Multi-panel composition" section above: `groupAndTagSvg.m` now takes a required `panId` and
   prefixes every id it generates with it.
+- Colorbar support (RESOLVED 2026-08-29, see "Colorbar support" section above) is fully tested only
+  for the default `Location='eastoutside'` -- `west`/`north`/`south` (with or without `outside`)
+  share the same `repositionColorbar` formula but have no dedicated test.
+- Image-type dataseries (`imagesc`/`image` as the actual plotted data) -- explicitly deferred, its
+  own separate round: `Image` objects have `Tag` but no `DisplayName` at all (a real gap in the
+  existing pairing/legend logic, which assumes `DisplayName` exists), multiple images CAN coexist
+  in one axes (no "only one" assumption is safe), and a data image renders via the exact same
+  pattern-filled-rect mechanism the colorbar's own gradient does (confirmed real while building
+  colorbar support -- `isDescendantOfTag(node,'pattern')` in `groupAndTagSvg.m`'s annotation
+  catch-all will matter again here).
+
+## Colorbar support (2026-08-29)
+
+Full colorbar identification/tagging, plus the `runPillar1.m` copy-step and `syncPanel.m` round-trip
+support it needs, built on top of the pillar-2 mechanism above. Several real, non-obvious mechanics
+found along the way, in the order they surfaced:
+
+**`imagesc()`/`image()` resets `ax.XColor`/`YColor` back to default** -- exactly the same family as
+the already-documented "`plot()` resets `FontSize`" gotcha. Only matters for color-identity work
+(see below); set axis colors AFTER the data-plotting call, never before.
+
+**Identity-color encoding extends cleanly to the colorbar's own outline/ticks/tick-labels.**
+`cb.Color` is the single property controlling all three at once (confirmed empirically: an exact
+hex match appears in the raw SVG for all three). `colorbarIdentityColorHex.m` reserves `roleCode=3`
+in `seriesRoleColorHex.m`'s own `(seriesIndex,roleCode,occurrence)` scheme -- a value real
+per-series data never uses (`computeIdentityColors.m` only ever assigns 1='value'/2='conf') -- so it
+can never collide. `dumpIdentitySvg.m` temporarily recolors `ax.Colorbar.Color` the same
+explicit-try/catch way it already recolors Line/Patch objects.
+
+**The gradient itself is a raster `<image>`, referenced via a `<pattern>` whose own `x`/`y`/`width`/
+`height` exactly match the outline's bbox** -- but the element that actually PAINTS with that
+pattern (`fill="url(#...)"`) is a plain closed-rect `<path>`, the exact same 5-point M-L-L-L-L shape
+`findClosedRectPaths.m` already parses for figure/axes-background/legend-box. So the gradient box is
+found as "the one closed-rect `<path>` whose bbox matches the identity-matched outline's bbox" --
+no `<pattern>`/`<image>` parsing needed. Two real consequences of this, both confirmed real while
+building `identifyColorbar.m`/`groupAndTagSvg.m`:
+  - The colorbar's gradient box is exactly the same *kind* of closed-rect `<path>`
+    `identifyLegend.m` hunts for, and was mistaken for a second legend-box candidate. Fixed by
+    identifying the colorbar BEFORE the legend and passing its bbox as a new `excludeRects`
+    parameter to `identifyLegend.m`, excluded by CONTAINMENT (not exact match) -- MATLAB also draws
+    several tiny (~0.5pt) decorative corner-cap closed-rect `<path>`s at the colorbar's own corners,
+    which an exact-bbox exclusion would miss (`identifyColorbar.m`'s own `decorationNodes`, tagged
+    and folded into the colorbar group so they don't fall to the unrelated "annotations" catch-all).
+  - The `<pattern>` definition's own `<image>` child (a resource DEFINITION, never itself a directly
+    rendered element) was being caught by `groupAndTagSvg.m`'s annotation catch-all, since a bare
+    `getElementsByTagName('image')` scan doesn't distinguish definition content from real content.
+    Fixed with a new `isDescendantOfTag(node,'pattern')` check in that catch-all loop. This will
+    matter again for image-type dataseries (a separate, not-yet-built round) -- same fix applies.
+
+**MATLAB draws the colorbar's own box-edge/ruler line duplicated multiple times** (confirmed via
+direct inspection: the tick-side edge 3x, the other 3 edges 2x each), interleaved with the gradient
+box's own opaque fill in a specific original order. Tried keeping only the last (topmost) duplicate
+per edge and deleting the rest as "provably redundant" -- this made the (already small) pixel-diff
+WORSE, not better: a stroke's own half-width bleeds slightly OUTSIDE the gradient rect's exact edge
+coordinate, so an earlier duplicate is NOT actually fully hidden by the later opaque fill the way a
+naive single-z-order argument suggests. Reverted to relocating every duplicate (all ending up after
+the gradient box, since that's relocated first) -- the closest achievable match without abandoning
+the "flatten into semantic groups" design for this one corner case. Residual: a small, precisely
+understood, PURELY COSMETIC pixel-diff (~0.17% of canvas, confined to sub-pixel antialiasing
+blending exactly along the colorbar's own edges) -- `test/test_colorbar.m` asserts a budget (5000)
+well above the observed ~1500, not zero, with this reasoning inline.
+
+**A colorbar's own tick-label `<text>` can coincidentally collide with axis tick-label matching.**
+Since a colorbar spans the box's full height, one of its own tick labels can land inside
+`matchTickLabels`'s generous "just below/left of the box" geometric window purely by y/x-coordinate
+coincidence, AND happen to share numeric content with an axis tick label (e.g. both showing "0").
+Fixed by adding an `excludeText` parameter to `matchTickLabels`, same exclude-list discipline
+`identifyLegend.m` already uses for legend text.
+
+**`ax.Colorbar.Location`'s default (`'eastoutside'`) is what non-idempotently re-shrinks
+`InnerPosition`** every time it's set (the "InnerPosition + colorbar" problem flagged as
+investigate-in-depth two rounds ago) -- confirmed exactly per that investigation's own hypothesis.
+`'east'`/`'west'`/etc. (no `outside` suffix) and `'manual'` do not touch `InnerPosition` at all and
+are idempotent under repeated sets. Fix in `runPillar1.m`'s copy step: capture the colorbar's
+current `Position` while still in its original `Location`, copy it together with `ax`/`Legend`
+(`copyobj(ax)` alone drops BOTH Legend and Colorbar, confirmed empirically), then immediately switch
+the copy's colorbar to `Location='manual'` and reapply the captured position -- BEFORE touching
+`InnerPosition` at all. `cb.FontSize`/`cb.Label.FontSize`, unlike the axis ruler/label FontSize
+properties, are NOT reset by `copyobj` (confirmed empirically) -- no re-application needed.
+
+**Repositioning a decoupled colorbar for the round-trip** (`syncPanel.m`'s `innerPositionOverride`
+case): since `Location='manual'` no longer auto-follows the box, `repositionColorbar` (in
+`runPillar1.m`) recomputes the colorbar's `Position` to preserve the same physical gap and width (or
+height, for horizontal orientations) relative to the box's own relevant edge, now anchored to the
+NEW `InnerPosition` instead of the old one -- implemented generally for all 4 base directions
+(east/west/north/south, with or without the `outside` suffix); a colorbar left in `Location='manual'`
+by the CALLER (not by this tool) is left untouched, since there's no directional reference to
+recompute from. **Fully tested only for the default `'eastoutside'`** (`test/test_colorbar.m`,
+including an aspect-ratio-changing resize) -- the other 3 directions share the same formula but have
+not been exercised by a test.
+
+**Deliberately out of scope for this round**: image-type dataseries (`imagesc`/`image` as the actual
+plotted data, not just a colorbar) -- confirmed real complications while building this (a data image
+renders via the exact same pattern-filled-rect mechanism as the colorbar's own gradient, and
+`Image` objects have `Tag` but no `DisplayName` at all) are tracked as their own, separate,
+not-yet-built round.

@@ -41,3 +41,14 @@ legend-box-border,legend-box,legend-box-border,legend border rect,1,
 legend-entry-{i},legend,legend-entry,(container only),1 per legend entry,{i} matches the entry's own dataseries-{i} series index
 legend-swatch-{i},legend-entry-{i},legend-swatch,swatch line/patch sample,1,
 legend-label-{i},legend-entry-{i},legend-label,entry text,1,content equals the series' own DisplayName
+colorbar,,colorbar,(container only),0 or 1,only created if a live Colorbar object exists; requires identityBakedSvgFile (see groupAndTagSvg.m's own header)
+colorbar-box,colorbar,colorbar-box,the pattern-filled gradient rect,1,"found by bbox match against the identity-matched outline, not by parsing the <pattern>/<image> at all -- see docs/findings.md"
+colorbar-outline,colorbar,colorbar-outline,(container only),1,
+colorbar-outline-{n},colorbar-outline,colorbar-outline-edge,one box-edge polyline,4 or more,"MATLAB draws some edges duplicated (confirmed real) -- every duplicate is kept, not just one, see docs/findings.md's own note on the resulting small cosmetic residual"
+colorbar-ticks,colorbar,colorbar-ticks,(container only),1,
+colorbar-tick-{n},colorbar-ticks,colorbar-tick,(container only),1 per numel(cb.Ticks),n is 1-indexed along the box's own long axis
+colorbar-tick-{n}-mark,colorbar-tick-{n},colorbar-tick-mark,tick mark polyline,1,
+colorbar-ticklabel-{n},colorbar-tick-{n},colorbar-tick-label,tick label text,1,"paired to its own tick mark by position order, matched on whichever side of the box has the right count"
+colorbar-decoration,colorbar,colorbar-decoration,(container only),0 or 1,"only created if MATLAB drew any tiny corner-cap rects (confirmed real, harmless furniture)"
+colorbar-decoration-{n},colorbar-decoration,colorbar-decoration,tiny (~0.5pt) corner-cap rect,1 per corner-cap found,
+colorbar-label,colorbar,colorbar-label,cb.Label's own text,0 or 1,"direct content match, same discipline as axis-xlabel/-ylabel"

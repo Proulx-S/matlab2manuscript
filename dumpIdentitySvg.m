@@ -20,6 +20,13 @@ function dumpIdentitySvg(fig, snap, outFile)
 % FaceColor AND EdgeColor are both overridden when both are actually in use (unfilled or edgeless
 % cases are left alone, matching snapshotAxesStyle.m's own "nothing to capture" convention) since
 % either could be the color matchGraphicsToSvg.m ends up keying on for a given object.
+%
+% Colorbar support (2026-08-29): if `fig` has a live Colorbar, its `Color` property is ALSO
+% temporarily overridden -- confirmed empirically to be the single property controlling its outline,
+% tick marks, AND tick-label text all at once -- to colorbarIdentityColorHex.m's own reserved
+% identity color (identifyColorbar.m looks it up the same way matchGraphicsToSvg.m looks up a
+% series' own identity color: exact hex match in this throwaway export, then cross-referenced by
+% geometry into the real one).
 
 hexList = computeIdentityColors(snap);
 restoreFns = {};
@@ -43,6 +50,14 @@ try
                 h.EdgeColor = rgb;
             end
         end
+    end
+    cb = findobj(fig, 'Type', 'colorbar');
+    if ~isempty(cb)
+        cb = cb(1);
+        origCbColor = cb.Color;
+        restoreFns{end+1} = @() set(cb,'Color',origCbColor); %#ok<AGROW>
+        cbIdHex = colorbarIdentityColorHex();
+        cb.Color = sscanf(cbIdHex(2:end), '%2x')' / 255;
     end
     drawnow;
     print(fig, outFile, '-dsvg', '-vector');
