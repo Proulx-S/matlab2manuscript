@@ -34,10 +34,14 @@ export directly from the caller's own raw figure.
 
 ## Layout
 
-- **`runPillar1.m`** (2026-08-29, revised same day for the copy step) — the single-function entry
-  point for the whole pillar-1 pipeline: `stats = runPillar1(ax, outDir, figId, panId, opts)` first
-  `copyobj`'s `ax` (and its Legend) into a fresh figure on a fixed standard canvas (default US
-  Letter portrait, `opts.canvasSize`/`opts.canvasUnits`) -- `ax`/its own figure are NEVER touched --
+- **`runPillar1.m`** (2026-08-29, revised same day for the copy step, and again for colorbar
+  support) — the single-function entry point for the whole pillar-1 pipeline: `stats =
+  runPillar1(ax, outDir, figId, panId, opts)` first `copyobj`'s `ax` (and its Legend/Colorbar, if
+  any) into a fresh figure on a fixed standard canvas (default US Letter portrait,
+  `opts.canvasSize`/`opts.canvasUnits`) -- `ax`/its own figure are NEVER touched -- decoupling any
+  Colorbar (`Location='manual'`) BEFORE touching `InnerPosition` at all, since its default
+  `'eastoutside'` non-idempotently re-shrinks `InnerPosition` on every set (see `docs/findings.md`),
+  then repositioning it (`repositionColorbar`) to track `opts.innerPositionOverride` when given --
   then runs snapshot → raw export → bake → identity export → identity bake → group/tag on the COPY,
   producing just `<figId>_<panId>_tagged.svg`. `figId`/`panId` are compulsory: `figId` names the
   output stem, and `panId` is passed straight through to `groupAndTagSvg.m`, which prefixes every
@@ -71,6 +75,18 @@ export directly from the caller's own raw figure.
   detected and rejected loudly. **Known validation gap**: exercised only against SIMULATED edits
   (`test/test_sync_panel.m` directly rewrites the composed SVG's DOM between calls) -- not yet
   round-tripped through a real external vector editor (Illustrator/Inkscape). See `docs/findings.md`.
+- **`identifyColorbar.m`** (2026-08-29) — colorbar identification/tagging: box (a pattern-filled
+  gradient rect, found by bbox match against the identity-matched outline, never by parsing the
+  `<pattern>`/`<image>` directly), outline, per-tick mark+label pairs, and the colorbar's own label,
+  reusing the SAME identity-color mechanism `dumpIdentitySvg.m`/`matchGraphicsToSvg.m` already use
+  for data series (`colorbarIdentityColorHex.m` reserves a roleCode real per-series data never
+  uses). Requires `identityBakedSvgFile`; a Colorbar without it falls through to the "annotations"
+  catch-all rather than erroring. **Fully tested only for the default `Location='eastoutside'`** --
+  see `docs/findings.md` for the several real MATLAB mechanics found while building this (duplicate
+  outline strokes, a colorbar tick label colliding with axis tick-label matching, a `<pattern>`'s
+  own `<image>` child being mistaken for a stray annotation). Image-type dataseries (`imagesc`/
+  `image` as the actual plotted data, not just a colorbar) are explicitly deferred to their own,
+  separate round.
 - `bakeTransforms.py` — flattens every `transform="matrix(...)"` MATLAB's exporter emits directly
   into each element's own geometry/size attributes (compulsory first step after export — see
   `docs/findings.md` for why). Preserves `<text>` as real text; a genuinely rotated `<text>`
@@ -224,3 +240,12 @@ into the composed multi-panel figure → feed back into MATLAB → regenerate �
 as `syncPanel.m` (2026-08-29), covered by `test/test_sync_panel.m`. Not yet done: a real
 external-vector-editor round-trip (only simulated edits tested so far -- see Layout section above
 and `docs/findings.md`).
+
+Colorbar support (`identifyColorbar.m`, 2026-08-29) is built end to end: identification/tagging
+(box, outline, per-tick mark+label pairs, own label), font-size correction on its two new roles, the
+`runPillar1.m` copy-step's decoupling/repositioning, and the `syncPanel.m` round-trip -- covered by
+`test/test_colorbar.m`. A small (~0.17% of canvas), precisely-diagnosed, purely cosmetic pixel-diff
+residual is expected (sub-pixel antialiasing along the colorbar's own duplicated outline strokes,
+see `docs/findings.md`) -- not a correctness issue. Fully tested only for the default
+`Location='eastoutside'`. Image-type dataseries (`imagesc`/`image` as the actual plotted data) are
+explicitly deferred to their own, separate, not-yet-built round.
