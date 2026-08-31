@@ -84,15 +84,14 @@ root = getRootGroup(doc);
 % --- identification only below (read-only queries against the still-untouched doc; every node
 % reference collected here stays valid after later mutation -- Java DOM objects don't invalidate
 % when detached, only their position changes) ---
-if nargin >= 6 && ~isempty(identityBakedSvgFile)
-    matches = matchGraphicsToSvg(snap, doc, identityBakedSvgFile);
-else
-    matches = matchGraphicsToSvg(snap, doc);
-end
-spineInfo = identifyAxisSpine(ax, doc, canvasSizePt);
-% Colorbar identified BEFORE the legend -- its gradient box is exactly the same kind of closed-rect
-% <path> identifyLegend.m hunts for, and would otherwise be mistaken for a second legend-box
-% candidate (confirmed real, 2026-08-29) -- excluded from identifyLegend's own search below instead.
+%
+% Colorbar identified BEFORE data-series matching (moved up, 2026-08-30, from its previous position
+% after matchGraphicsToSvg) -- its gradient box uses the EXACT SAME pattern-filled-closed-rect-<path>
+% mechanism an Image dataseries' own box does (matchGraphicsToSvg.m's own image-matching strategy),
+% so it's otherwise a real false-positive candidate for image matching -- confirmed real while
+% building image-dataseries support this same day, see docs/findings.md. Excluded from
+% matchGraphicsToSvg's own image-matching below via cbExcludeNodes, same discipline as the pre-
+% existing colorbar-vs-legend-box exclusion just below.
 if nargin >= 6 && ~isempty(identityBakedSvgFile)
     cbInfo = identifyColorbar(ax, doc, xmlread(identityBakedSvgFile));
 else
@@ -100,10 +99,18 @@ else
 end
 cbExcludeRects = {};
 cbExcludeText = {};
+cbExcludeNodes = {};
 if ~isempty(cbInfo)
     cbExcludeRects = {cbInfo.bboxPt};
     cbExcludeText = [cbInfo.tickLabelNodes(:)', {cbInfo.labelNode}];
+    cbExcludeNodes = [{cbInfo.boxNode}, cbInfo.decorationNodes(:)'];
 end
+if nargin >= 6 && ~isempty(identityBakedSvgFile)
+    matches = matchGraphicsToSvg(snap, doc, identityBakedSvgFile, canvasSizePt, cbExcludeNodes);
+else
+    matches = matchGraphicsToSvg(snap, doc, [], canvasSizePt, cbExcludeNodes);
+end
+spineInfo = identifyAxisSpine(ax, doc, canvasSizePt);
 legInfo = identifyLegend(ax, snap, doc, spineInfo.expectedBoxPt, canvasSizePt, cbExcludeRects);
 % cbExcludeText: a colorbar's own tick-label <text> can coincidentally share numeric CONTENT with an
 % axis tick label (e.g. both showing "0"), and -- since the colorbar spans the box's full height --
@@ -386,6 +393,10 @@ if ~isempty(dataMembers)
         end
         if strcmp(snap(i).type,'patch')
             role = 'dataseries-fill'; leafSuffix = '-fill'; subSuffix = '-conf'; subRole = 'dataseries-conf'; subMap = confGroupOf;
+        elseif strcmp(snap(i).type,'image')
+            % 2026-08-30: a heatmap/`image`/`imagesc` dataseries -- its own 'value' sub-group, same as
+            % a Line, since there's no 'conf'/error-band counterpart concept for raster image content.
+            role = 'dataseries-image'; leafSuffix = '-image'; subSuffix = '-value'; subRole = 'dataseries-value'; subMap = valueGroupOf;
         else
             role = 'dataseries-line'; leafSuffix = '-line'; subSuffix = '-value'; subRole = 'dataseries-value'; subMap = valueGroupOf;
         end
@@ -512,11 +523,23 @@ function furn = identifyFurniture(doc, canvasSizePt, axesBoxPt)
 % bgTol=1.5pt -- see identifyLegend.m's own identical constant/comment: the 72/ScreenPixelsPerInch
 % rounding discrepancy scales with absolute canvas size and exceeds a 1pt tolerance on a US-Letter
 % canvas (2026-08-29).
+%
+% Pattern-filled candidates are EXCLUDED here (2026-08-30) -- an image dataseries spanning the axes'
+% FULL extent (a full-bleed heatmap, a very common real case) produces its own pattern-filled closed-
+% rect <path> with the EXACT SAME bbox as the true (solid-fill) axes-background rect. Without this
+% exclusion, whichever of the two happens to come LAST in document order silently overwrites the
+% other as `furn.axesBgNode` (plain assignment, no uniqueness check) -- confirmed real building this
+% same-day round: the true background rect fell through to "annotations" unclaimed, while the
+% image's own rect got double-tagged (correctly recovered only because dataseries processing runs
+% AFTER furniture and wins the final DOM position/attributes -- the axes-background rect itself was
+% still silently lost). The true background always has a solid fill (ax.Color); an image's/
+% colorbar's own referencing rect always has `fill="url(#...)"` -- never both real content.
 bgTol = 1.5;
 rects = findClosedRectPaths(doc);
 furn.figureBgNode = [];
 furn.axesBgNode = [];
 for i = 1:numel(rects)
+    if isPatternFilled(rects{i}.node); continue; end
     r = rects{i}.rect;
     if all(abs(r - [0 0 canvasSizePt(1) canvasSizePt(2)]) < bgTol)
         furn.figureBgNode = rects{i}.node;
@@ -700,6 +723,14 @@ while ~isempty(n) && n.getNodeType() == n.ELEMENT_NODE
     end
     n = n.getParentNode();
 end
+end
+
+function tf = isPatternFilled(node)
+% True if node's own (or inherited) fill references a <pattern> (an image/colorbar-gradient
+% referencing rect) rather than a plain solid color -- see identifyFurniture's own caller comment.
+val = '';
+if node.hasAttribute('fill'); val = char(node.getAttribute('fill')); else; val = attrFromAncestor(node, 'fill'); end
+tf = ~isempty(regexp(val, '^url\(#', 'once'));
 end
 
 function anchor = earliestOriginalChild(root, nodes)

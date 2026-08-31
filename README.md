@@ -84,9 +84,19 @@ export directly from the caller's own raw figure.
   catch-all rather than erroring. **Fully tested only for the default `Location='eastoutside'`** --
   see `docs/findings.md` for the several real MATLAB mechanics found while building this (duplicate
   outline strokes, a colorbar tick label colliding with axis tick-label matching, a `<pattern>`'s
-  own `<image>` child being mistaken for a stray annotation). Image-type dataseries (`imagesc`/
-  `image` as the actual plotted data, not just a colorbar) are explicitly deferred to their own,
-  separate round.
+  own `<image>` child being mistaken for a stray annotation).
+- **Image-type dataseries** (2026-08-30) — `snapshotAxesStyle.m`/`matchGraphicsToSvg.m`/
+  `groupAndTagSvg.m` now identify/match/tag an `image`/`imagesc` (heatmap) dataseries as a
+  `dataseries-image` leaf, matched by direct GEOMETRIC correlation (`XData`/`YData` → expected
+  canvas box) rather than any color-identity trick — a raster image's "color" is baked inside a
+  compressed PNG blob, not a plain SVG attribute string, and there's no ambiguity to resolve via
+  color anyway since each Image's own live `XData`/`YData` already fully determines its expected
+  position. `Image` objects have `Tag` but no `DisplayName` at all (never read; `groupAndTagSvg.m`'s
+  existing no-`DisplayName` fallback handles the id-slug). Coexists correctly with a colorbar in the
+  same axes and with multiple images in one axes — see `docs/findings.md` for two real false-
+  positive mechanisms found and fixed while building this (colorbar's gradient box vs. an image's
+  own box; a full-bleed image vs. the true axes-background rect, both sharing the identical
+  pattern-filled-closed-rect-`<path>` bbox).
 - `bakeTransforms.py` — flattens every `transform="matrix(...)"` MATLAB's exporter emits directly
   into each element's own geometry/size attributes (compulsory first step after export — see
   `docs/findings.md` for why). Preserves `<text>` as real text; a genuinely rotated `<text>`
@@ -247,5 +257,10 @@ Colorbar support (`identifyColorbar.m`, 2026-08-29) is built end to end: identif
 `test/test_colorbar.m`. A small (~0.17% of canvas), precisely-diagnosed, purely cosmetic pixel-diff
 residual is expected (sub-pixel antialiasing along the colorbar's own duplicated outline strokes,
 see `docs/findings.md`) -- not a correctness issue. Fully tested only for the default
-`Location='eastoutside'`. Image-type dataseries (`imagesc`/`image` as the actual plotted data) are
-explicitly deferred to their own, separate, not-yet-built round.
+`Location='eastoutside'`.
+
+Image-type dataseries (`imagesc`/`image` as the actual plotted data, not just a colorbar) are now
+supported (2026-08-30) -- matched by direct geometric correlation, no color-identity involved,
+covered by `test/test_image_dataseries.m` (single image, two images in one axes, an image alongside
+a colorbar). See `docs/findings.md` for the mechanics and two real false-positive bugs found and
+fixed while building this.

@@ -551,13 +551,8 @@ simulation doesn't catch. This is the next thing to close before trusting this l
 - Colorbar support (RESOLVED 2026-08-29, see "Colorbar support" section above) is fully tested only
   for the default `Location='eastoutside'` -- `west`/`north`/`south` (with or without `outside`)
   share the same `repositionColorbar` formula but have no dedicated test.
-- Image-type dataseries (`imagesc`/`image` as the actual plotted data) -- explicitly deferred, its
-  own separate round: `Image` objects have `Tag` but no `DisplayName` at all (a real gap in the
-  existing pairing/legend logic, which assumes `DisplayName` exists), multiple images CAN coexist
-  in one axes (no "only one" assumption is safe), and a data image renders via the exact same
-  pattern-filled-rect mechanism the colorbar's own gradient does (confirmed real while building
-  colorbar support -- `isDescendantOfTag(node,'pattern')` in `groupAndTagSvg.m`'s annotation
-  catch-all will matter again here).
+- Image-type dataseries (`imagesc`/`image` as the actual plotted data) -- RESOLVED 2026-08-30, see
+  "Image-type dataseries support" section below.
 
 ## Colorbar support (2026-08-29)
 
@@ -643,4 +638,90 @@ not been exercised by a test.
 plotted data, not just a colorbar) -- confirmed real complications while building this (a data image
 renders via the exact same pattern-filled-rect mechanism as the colorbar's own gradient, and
 `Image` objects have `Tag` but no `DisplayName` at all) are tracked as their own, separate,
-not-yet-built round.
+not-yet-built round. RESOLVED 2026-08-30, see "Image-type dataseries support" section below.
+
+## Image-type dataseries support (2026-08-30)
+
+An axes' actual plotted DATA can be an `image`/`imagesc` object (a heatmap) rather than a Line/
+Patch -- `snapshotAxesStyle.m`/`matchGraphicsToSvg.m`/`groupAndTagSvg.m` now identify/match/tag this
+as a `dataseries-image` leaf, same top-level `dataseries` group as Line/Patch. Mechanics, in the
+order they surfaced:
+
+**`Image` objects have a `Tag` property but NO `DisplayName` property at all** -- confirmed
+empirically (accessing `.DisplayName` throws `Unrecognized method, property, or field`). Fixed at
+the root in `snapshotAxesStyle.m`: `displayName` is set to `''` directly for an Image entry, never
+read from the object -- `groupAndTagSvg.m`'s existing id-slug computation (`seriesDisplayNameOf`)
+already falls back to `series<n>` for an empty `displayName` with no changes needed there. Multiple
+`Image` objects CAN coexist in one axes (confirmed: `findobj(ax,'Type','image')` count goes from 1
+to 2 after adding a second one) -- no "only one" assumption is made anywhere in the new code.
+
+**Images never produce real legend entries.** Confirmed: `legend(ax)` on an axes containing only an
+image returns a non-empty legend HANDLE but `lg.String` is an empty cell and
+`numel(lg.PlotChildren)==0`. No image-to-legend matching path was built -- it isn't a real case.
+
+**No identity-color matching for images -- direct geometric correlation instead.** A raster image's
+"color" is baked inside a compressed PNG blob, not a plain SVG attribute string, so the exact-hex-
+string trick that resolves Line/Patch color collisions doesn't transfer. Not needed anyway: each
+Image's own live `XData`/`YData` already fully determines its expected position, so there's no
+ambiguity to resolve via color the way there is for Line/Patch. `dumpIdentitySvg.m` explicitly skips
+recoloring an Image entry (`continue` in its main loop) rather than crashing on `.FaceColor`/
+`.EdgeColor`, which an Image object doesn't have.
+
+**The XData/YData -> rendered-extent mapping**, confirmed empirically against a real baked SVG's own
+referencing-path geometry (exact match, not approximate): MATLAB only ever uses the FIRST and LAST
+elements of `XData`/`YData` regardless of vector length. The rendered extent is HALF A PIXEL WIDER on
+each side than those two values: `dx = (XData(end)-XData(1))/(nCols-1)`, image spans
+`[XData(1)-dx/2, XData(end)+dx/2]` (analogous for Y/`dy`/`nRows`). A single-column/row image
+(`nCols==1`/`nRows==1`, `dx` undefined) defaults to `dx=1` -- MATLAB's own implicit single-pixel
+data-unit width, confirmed empirically: `image(ax,[5 5],[1 3],C)` with 1-column `CData` produces
+`ax.XLim=[4.5 5.5]`, exactly a 1-unit-wide default pixel. `snapshotAxesStyle.m`'s new
+`computeImageExpectedFracBox` converts this (plus `ax.XLim`/`YLim`/`XDir`/`YDir`/`InnerPosition`)
+into a normalized FIGURE-fraction box while `ax` is still live; `matchGraphicsToSvg.m` only needs to
+scale it by the canvas's own physical size at match time, mirroring `identifyAxisSpine.m`'s own
+two-stage normalized-fraction -> canvas-points approach (`ax` itself is never threaded into
+`matchGraphicsToSvg.m`).
+
+**THE key structural correction to last round's own assumption**: an `<image>` element's OWN
+`x`/`y`/`width`/`height` attributes are ALWAYS in a local pattern-TILE coordinate frame (typically
+`x="0" y="0"`), never the real canvas position -- for BOTH a data image and the colorbar's own
+gradient. The previous round's comment characterized the `<pattern>`'s own bbox as giving real
+placement; re-verified directly this round and that is NOT what's happening (`identifyColorbar.m`'s
+own actual mechanism already correctly used the alternative below, its own header comment says so
+explicitly -- the misreading was in a different comment, not in the shipped code). The real canvas
+placement lives entirely on whichever OTHER element paints with `fill="url(#patternId)"` -- confirmed
+always a plain closed-rect `<path>`, the same 5-point M-L-L-L-L shape `findClosedRectPaths.m` already
+parses for figure/axes-background/legend-box/colorbar-gradient. So: every closed-rect `<path>` whose
+fill (own or inherited, `attrOrParent`) references a pattern is a placement candidate, bbox-matched
+against each Image's expected box within the usual ~1.5pt tolerance -- no `<pattern>`/`<image>`
+parsing needed for placement at all. Zero or multiple matches errors loudly.
+
+**A colorbar's gradient box is a real false-positive candidate for image matching -- confirmed real,
+not just theoretical** (this is exactly why `test_colorbar.m`'s own fixture deliberately avoided
+`imagesc`, per that file's header). Both use the identical pattern-filled-closed-rect-`<path>`
+mechanism. Fixed by reordering `groupAndTagSvg.m`: colorbar identification now runs BEFORE data-
+series matching (previously after), and its `boxNode`/`decorationNodes` are passed as a new
+`excludeNodes` parameter to `matchGraphicsToSvg.m`, filtered out via `isSameNode` before bbox-
+matching. Validated in `test/test_image_dataseries.m` Case 3 (image + colorbar together, both
+correctly tagged, confirmed not the same node).
+
+**A second real false-positive, found by direct construction, not anticipated in advance**: when an
+image spans the axes' FULL extent (a full-bleed heatmap -- plausibly the most common real use case),
+its own pattern-filled referencing `<path>` shares the EXACT SAME bbox as the true (solid-fill) axes-
+background rect. `identifyFurniture`'s own axes-background matching had no fill-type or uniqueness
+check (`furn.axesBgNode = rects{i}.node` is a plain overwrite) -- whichever of the two rects came
+LAST in document order silently won, and since the true background happened to be earlier, it lost
+and fell through to "annotations" unclaimed (confirmed via direct inspection: `stats.nAnnotations`
+came out 2, not the expected 1, and the extra one was traced to the true background's own solid-fill
+`<path>`). Fixed with a new `isPatternFilled(node)` helper excluding any pattern-filled candidate
+from BOTH figure- and axes-background candidacy in `identifyFurniture` -- the true background always
+has a solid fill (`ax.Color`/figure `Color`), never a pattern reference.
+
+**An unrelated, pre-existing gap surfaced while building this round's own test fixture, NOT fixed
+here (out of scope for image-dataseries support specifically)**: with `YDir='reverse'` (which
+`imagesc` sets), a Y-tick label can coincidentally land inside `matchTickLabels`'s own X-tick-label
+position window (a pure y-coordinate range check, no x-coordinate cross-check) while sharing numeric
+CONTENT with a real X-tick value (e.g. both showing "50") -- confirmed real with `XLim`/`YLim`
+ranges that happen to produce overlapping tick values (X ticks 10/20/30/40/50, Y ticks 5/10/.../50).
+`test/test_image_dataseries.m` sidesteps it with explicit non-overlapping `XTick`/`YTick` values
+rather than fixing `matchTickLabels` itself. Worth revisiting if a real project's own axis ranges hit
+this in practice.

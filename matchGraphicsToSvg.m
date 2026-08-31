@@ -1,4 +1,4 @@
-function matches = matchGraphicsToSvg(snap, svgFile, identitySvgFile)
+function matches = matchGraphicsToSvg(snap, svgFile, identitySvgFile, canvasSizePt, excludeNodes)
 % matchGraphicsToSvg  Match each snapshotAxesStyle.m entry to its corresponding SVG element(s) in
 % svgFile. Two matching strategies:
 %
@@ -31,6 +31,32 @@ function matches = matchGraphicsToSvg(snap, svgFile, identitySvgFile)
 % BOTH svgFile and identitySvgFile -- pass an already-open doc for svgFile when a caller
 % (groupAndTagSvg.m) needs matches(i).node to stay valid against a doc it will go on to mutate and
 % serialize itself.
+%
+% (3) IMAGE geometric correlation (2026-08-30, snap(i).type=='image' -- a heatmap/`image`/`imagesc`
+%     dataseries): NEVER uses either color-based strategy above -- a raster image's "color" is baked
+%     inside a compressed PNG blob, not a plain SVG attribute string, so exact-hex-string matching
+%     doesn't transfer, and isn't needed anyway: each Image's own live XData/YData already fully
+%     determines its expected box (snapshotAxesStyle.m's own computeImageExpectedFracBox), so there's
+%     no color ambiguity to resolve the way there is for Line/Patch. `canvasSizePt` (REQUIRED when
+%     any snap(i).type=='image') scales that normalized-fraction box into SVG points, mirroring
+%     identifyAxisSpine.m's own two-stage approach.
+%
+%     Mechanism (confirmed empirically before writing this, 2026-08-30): an `<image>` element's OWN
+%     x/y/width/height attributes are ALWAYS in a local pattern-TILE coordinate frame (typically
+%     x="0" y="0"), never the real canvas position, for ANY image content (not colorbar-specific, as
+%     the previous round's own comment assumed) -- MATLAB wraps every embedded raster in a `<pattern>`
+%     (in `<defs>`), and the actual canvas placement lives entirely on whichever OTHER element paints
+%     with `fill="url(#patternId)"` -- confirmed to always be a plain closed-rect <path>, the exact
+%     same 5-point M-L-L-L-L shape findClosedRectPaths.m already parses for figure/axes-background/
+%     legend-box/colorbar-gradient (identifyColorbar.m already established and documents this same
+%     "the pattern itself is irrelevant to placement" mechanism for the colorbar's own gradient box).
+%     So: every closed-rect <path> whose fill (own or inherited, attrOrParent) references a pattern
+%     is a placement candidate, bbox-matched against each Image's expected box within this repo's
+%     usual ~1.5pt tolerance -- no <pattern>/<image> parsing needed for placement at all. Zero or
+%     multiple matches errors loudly (same "refuse to guess" posture as strategies (1)/(2) above)
+%     rather than silently guessing.
+
+if nargin < 5; excludeNodes = {}; end
 
 if ischar(svgFile) || isstring(svgFile)
     doc = xmlread(svgFile);
@@ -62,6 +88,12 @@ matches = repmat(struct('svgTag','', 'points',[], 'node',[], 'candidateCountBefo
 
 for i = 1:numel(snap)
     s = snap(i);
+    if strcmp(s.type, 'image')
+        assert(nargin >= 4 && ~isempty(canvasSizePt), 'matchGraphicsToSvg:missingCanvasSize', ...
+            'object %d is an Image dataseries -- canvasSizePt is required to match it (see this file''s own header).', i);
+        matches(i) = matchImageToSvg(s, doc, canvasSizePt, excludeNodes, i);
+        continue
+    end
     if strcmp(s.type, 'line')
         if isempty(s.hex)
             continue   % no visible stroke -- nothing to match (e.g. a hidden helper line)
@@ -167,6 +199,49 @@ for i = 1:numel(snap)
          'live data has %d -- likely an axis-clip-boundary split (see file header); refusing to ' ...
          'return a partial match.'], ...
         i, s.type, s.displayName, matches(i).svgTag, size(matches(i).points,1), s.nPts);
+end
+end
+
+function m = matchImageToSvg(s, doc, canvasSizePt, excludeNodes, snapIdx)
+% matchImageToSvg  See this file's own header, strategy (3). Converts s.expectedFracBox (normalized
+% figure fraction, MATLAB-space bottom-left origin -- snapshotAxesStyle.m) to SVG points the same way
+% identifyAxisSpine.m's own expectedBoxPt does, then bbox-matches every pattern-filled closed-rect
+% <path> in doc against it. excludeNodes (e.g. a colorbar's own boxNode/decorationNodes, see
+% groupAndTagSvg.m's own caller comment) skips candidates already claimed elsewhere -- a colorbar's
+% gradient box uses this EXACT SAME pattern-filled-rect mechanism, confirmed a real false-positive
+% risk while building this (2026-08-30), not just a theoretical one.
+W = canvasSizePt(1); H = canvasSizePt(2);
+fb = s.expectedFracBox;
+x0 = fb(1)*W; x1 = fb(3)*W;
+yBottomMatlab = fb(2)*H; yTopMatlab = fb(4)*H;
+y0 = H - yTopMatlab; y1 = H - yBottomMatlab;
+expectedBoxPt = [x0 y0 x1 y1];
+
+tol = 1.5;   % same tolerance family as identifyAxisSpine.m/identifyLegend.m (72/ScreenPixelsPerInch rounding)
+rects = findClosedRectPaths(doc);
+cands = {};
+for ri = 1:numel(rects)
+    if isNodeInList(rects{ri}.node, excludeNodes); continue; end
+    fillVal = attrOrParent(rects{ri}.node, 'fill');
+    if isempty(regexp(fillVal, '^url\(#', 'once')); continue; end
+    if all(abs(rects{ri}.rect - expectedBoxPt) < tol)
+        cands{end+1} = rects{ri}.node; %#ok<AGROW>
+    end
+end
+m = struct('svgTag','path', 'points',[], 'node',[], 'candidateCountBeforeTiebreak',numel(cands));
+assert(~isempty(cands), 'matchGraphicsToSvg:noImageCandidate', ...
+    'object %d (type=image, tag=%s): no pattern-filled closed-rect <path> found near the expected box [%.2f %.2f %.2f %.2f] -- did baking/export change?', ...
+    snapIdx, s.tag, expectedBoxPt);
+assert(numel(cands) == 1, 'matchGraphicsToSvg:ambiguousImageMatch', ...
+    'object %d (type=image, tag=%s): %d pattern-filled closed-rect <path> candidates match the expected box -- cannot disambiguate.', ...
+    snapIdx, s.tag, numel(cands));
+m.node = cands{1};
+end
+
+function tf = isNodeInList(node, list)
+tf = false;
+for i = 1:numel(list)
+    if ~isempty(list{i}) && node.isSameNode(list{i}); tf = true; return; end
 end
 end
 
