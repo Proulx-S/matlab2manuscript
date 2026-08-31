@@ -519,6 +519,13 @@ simulation doesn't catch. This is the next thing to close before trusting this l
 
 ## Not yet investigated / open
 
+- **NEXT UP (2026-08-30):** Pillar 2's round-trip (`syncPanel.m`) has only ever been exercised
+  against simulated DOM edits standing in for a human's vector-editor edit -- never through a real
+  external editor (Illustrator, Inkscape). This is the one item every other round in this list has
+  since resolved around, and it's the actual point of the whole pillar-2 mechanism: confirm a real
+  editor's own SVG output (transform conventions, whether it bakes transforms away on save, id/attr
+  preservation across a save round-trip) is something `resolveElementCTM.m`/`syncPanel.m` can
+  actually parse, not just the synthetic edits this repo's own tests construct.
 - The `ScreenPixelsPerInch`-dependent bug documented in the OLD `humanMouse` engine
   (`project_humanMouse_manuscript_figure_svg_workflow.md`, a ~32% size mismatch between headless
   and interactive sessions) was NOT reproduced by the simple point-quantization rounding found

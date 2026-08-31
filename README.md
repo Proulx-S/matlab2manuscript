@@ -247,9 +247,9 @@ not a real external vector editor.)
 
 Pillar 2 (the round-trip: harvest wherever a human repositioned/resized a panel AFTER inserting it
 into the composed multi-panel figure → feed back into MATLAB → regenerate → re-place) is now built
-as `syncPanel.m` (2026-08-29), covered by `test/test_sync_panel.m`. Not yet done: a real
+as `syncPanel.m` (2026-08-29), covered by `test/test_sync_panel.m`. **NEXT UP (2026-08-30):** a real
 external-vector-editor round-trip (only simulated edits tested so far -- see Layout section above
-and `docs/findings.md`).
+and `docs/findings.md`'s own "Not yet investigated / open" section, first item).
 
 Colorbar support (`identifyColorbar.m`, 2026-08-29) is built end to end: identification/tagging
 (box, outline, per-tick mark+label pairs, own label), font-size correction on its two new roles, the
