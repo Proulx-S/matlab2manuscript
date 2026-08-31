@@ -21,6 +21,12 @@ function dumpIdentitySvg(fig, snap, outFile)
 % cases are left alone, matching snapshotAxesStyle.m's own "nothing to capture" convention) since
 % either could be the color matchGraphicsToSvg.m ends up keying on for a given object.
 %
+% Image objects (2026-08-30) are deliberately NEVER recolored here -- a raster image's "color" is
+% baked inside a compressed PNG blob, not a plain SVG attribute string, so the exact-hex-string trick
+% this function relies on for Line/Patch doesn't transfer, and isn't needed anyway: an Image's own
+% live XData/YData already fully determines its expected position (matchGraphicsToSvg.m matches it
+% by direct geometric correlation instead, see snapshotAxesStyle.m's own computeImageExpectedFracBox).
+%
 % Colorbar support (2026-08-29): if `fig` has a live Colorbar, its `Color` property is ALSO
 % temporarily overridden -- confirmed empirically to be the single property controlling its outline,
 % tick marks, AND tick-label text all at once -- to colorbarIdentityColorHex.m's own reserved
@@ -38,6 +44,8 @@ try
             orig = h.Color;
             restoreFns{end+1} = @() set(h,'Color',orig); %#ok<AGROW>
             h.Color = rgb;
+        elseif isa(h,'matlab.graphics.primitive.Image')
+            continue   % never recolored -- see this file's own header
         else
             if ~(ischar(h.FaceColor) && strcmp(h.FaceColor,'none'))
                 orig = h.FaceColor;
