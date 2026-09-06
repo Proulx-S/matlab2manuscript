@@ -1,0 +1,15 @@
+# This file exists solely to make scratch/ materialize in every clone and every git worktree.
+#
+# scratch/ is the canonical location for throwaway dev/agent scratch in this repo: probe scripts,
+# run logs, one-off verification .m files -- anything you would otherwise be tempted to drop in
+# tmp/ and delete before committing. Its CONTENTS are gitignored (see .gitignore's `scratch/*` +
+# `!scratch/.gitkeep` pair), so nothing you put here can reach a commit and no cleanup step is
+# needed before `git add -A`.
+#
+# Do not `rm -rf` this folder. There is no reason to: it is invisible to git, and when the
+# worktree it lives in is removed after its PR merges, the scratch goes with it. A recursive rm
+# bundled into the same shell call as a heredoc commit message is exactly what tripped a
+# confirmation prompt for Seb on 2026-09-05 and prompted this convention.
+#
+# Keep durable output (code, results, caches, figures) OUT of here -- that belongs in the
+# repository proper, tracked, or under localCache/ if it is large and regenerable.
