@@ -1,9 +1,15 @@
 # Strategy: porting huMoMain's figures onto a PNAS/Overleaf pipeline
 
 Written 2026-09-17. This is a **strategy, not an implementation plan with code** — the
-agreed approach is to port figures one at a time, together, so this document fixes the
-shared architecture and the per-figure order, and deliberately stops short of designing
-each figure's layout.
+agreed approach is to port figures one at a time, together, so this document sketches the
+shared architecture and a starting order, and deliberately stops short of designing each
+figure's layout.
+
+**Treat it as provisional.** The delivery end (§8) is measured and can be relied on; the
+figure-side design (§3, §4) is a considered proposal that has not yet met a real figure,
+and the first one or two ports should be expected to change it. §12 lists what is most
+likely to shift. Where this document sounds decided, read "current best guess" — it is
+written in the declarative to be useful, not because the questions are closed.
 
 Scope: main figures 1–5 of huMoMain, plus supporting information. Two companion
 documents, neither of them in this repository: `scratch/pnas/README.md` in this worktree
@@ -62,7 +68,8 @@ agreed on last. So a pure *move* is genuinely ambiguous with a hand-edited-but-u
 `layout.json`, which is exactly why a resize can be auto-harvested but a move needs an
 explicit `updateFigxN.m` call, and why the ordering hazard exists at all.
 
-**The fix is to record the base.** At every composition, write a sidecar
+**The proposal is to record the base** — untested, but the diagnosis above is solid and
+this is the standard remedy for it. At every composition, write a sidecar
 `FigxN.built.json` stamping, per panel, the exact layout values the SVG was built from,
 plus a content fingerprint:
 
@@ -82,7 +89,7 @@ three-way merge:
 | same | **differs** | hand-edited JSON → apply JSON → SVG on compose |
 | **differs** | **differs** | genuine conflict → **fail loudly**, print both |
 
-Three consequences, all good:
+Three consequences, if it holds up (see §12.1 for the case this table does not cover):
 
 - **A pure move becomes auto-harvestable**, because it is no longer ambiguous. The
   `updateFigxN.m` family disappears — only two exist today (`updateFigx1xa.m`,
@@ -173,11 +180,29 @@ What can be said before touching anything:
 | **5** `makeFigx5.m` (239 ln) | fixed 1×3 full-width row of equal squares, `(215.9−20−10)/3 ≈ 61.97 mm` | Cleanest retarget: the same formula at 178 mm gives `(178−2m−2g)/3`. Smallest and most self-contained. |
 | **SI** | **no code exists** — no `figS*`, no supplement machinery anywhere | Not a port at all: greenfield. Combined with "the supplementary figures are very dirty", the right answer is the passthrough of §7, not the full pipeline. |
 
-**Suggested order: 5 → 1 → 3 → 4 → 2, then SI.** Figure 5 is the pathfinder — small
+The SI is a different document with different geometry, and it is worth knowing before
+planning anything for it: the SI project ships `pnas-new.cls` **v1.45**, not the
+manuscript project's v1.47, and its template is **single-column** (`[9pt,twoside,lineno]`
+with no `twocolumn`). Measured, its text measure is 505.694 pt = **177.74 mm** — the
+2-column figure width to within 0.06 mm — on a full US Letter page rather than the
+manuscript's shrunk layout. So SI figures are naturally authored at 178 mm and there is
+no column structure to reason about at all. An 87 mm figure in the SI would sit at half
+measure, which is permitted but probably not what anyone wants.
+
+That PNAS ships two different class versions across its own two templates is their
+inconsistency, not something to fix; it just means the SI's numbers must be measured
+separately, as above, rather than assumed from the manuscript's.
+
+**Suggested order: 5 → 1 → 3 → 4 → 2, then SI.** Figure 5 as the pathfinder — small
 enough that the shared layer gets shaped by a real case rather than by speculation, and
-its sizing math retargets almost by inspection. Figure 1 comes second because it already
-has the per-panel structure and it exercises both composition and passthrough. Figure 2
-is last because it is the one that needs the ppi lint to be real.
+its sizing math retargets almost by inspection. Figure 1 second because it already has
+the per-panel structure and would exercise both composition and passthrough. Figure 2
+last because it is the one that needs the ppi lint to be real.
+
+This order is a guess from file sizes, headers and one reading of each figure's inputs —
+not from having built any of them. If figure 5 turns out to be unrepresentative, or if
+figure 1's existing per-panel structure means it would actually teach us more, reorder
+without ceremony. The point of going one at a time is precisely to be able to.
 
 ## 7. Escape hatch: passthrough figures
 
@@ -204,6 +229,16 @@ Proven today by `figtest` (pushed to the manuscript project as `d67ca14`):
   ArialMT, which is on PNAS's accepted-font list.
 - `\includegraphics` takes **no width or scale option** — the file is already at final
   size. A scaling option would mask exactly the defects the lint should catch.
+- **Four float layouts are available, and the width class is what selects between them.**
+  `figure` at 87 mm, `figure*` at 178 mm, and `SCfigure*` — a full-width float with the
+  caption beside the figure — at either 114.3 mm (the good balance) or 87 mm (for a long
+  legend). `SCfigure*` needs no extra package; the class already loads
+  `sidecap[rightcaption]`. Crucially for us, sidecap keeps the *graphic's* natural width
+  and shrinks the *caption* to whatever is left of the 512 pt block, so a side-caption
+  figure is still authored at one of the three permitted widths and **the pipeline needs
+  no special case for it** — only the manuscript's `\begin{...}` line changes. This is
+  also the most plausible reason the 1.5-column width exists: it is the one that leaves a
+  usable caption strip (62.1 mm, against 89.7 mm behind an 87 mm graphic).
 - **Figures go after the first-page text block.** Placing a float while `\Firstpage` is
   in effect overflows the page by 199.69 pt; this is a defect in `pnas-new.cls` v1.47
   that the pristine PNAS template triggers too. Call `\Endparasplit` first, as the
@@ -258,3 +293,53 @@ this clone, so the old engine currently produces nothing here and there is nothi
 break. Per figure: pick the width class, build the replacement on `runPillar1`, re-tune
 the layout, lint, deliver, accept — and only then delete that figure's `makeFigxN.m` and
 `updateFigxN.m`.
+
+## 12. What we will only find out by doing it
+
+Listed so the first port does not have to rediscover that these were open, and so nobody
+reads §3 and §4 as settled. Roughly in order of how likely each is to change the design.
+
+1. **Whether the three-way merge of §3 is sufficient, and what it does when the panel
+   set changes.** A panel that did not exist at the last composition has no BASE to
+   compare against, so the table in §3 has no row for it. Figure 4 makes this concrete
+   rather than hypothetical, since its metric list grows (`[]` means "not ready yet").
+   Some rule is needed — probably "no BASE → take `layout.json` if it has an entry, else
+   place by default" — but that is a guess, and the same question arises for a panel that
+   *disappears*.
+2. **What a real Inkscape save actually does to the file.** Pillar 2's `syncPanel.m`
+   already round-trips a resize, so the basic machinery works, but reconciling against a
+   stamped base is new, and external-editor validation was already the standing next item
+   before any of this. If Inkscape rewrites structure more aggressively than expected,
+   §3's sidecar is still safe but the harvest may need to be more forgiving about what it
+   matches on.
+3. **The content fingerprint of §4 may not be implementable as described.** Panel content
+   arrives as live MATLAB handles, not files, so "hash the input data" may have nothing
+   concrete to hash at the point where the figure function runs. The fallback is to
+   fingerprint the *rendered* panel, which changes on cosmetic replots too and therefore
+   cries stale more often than it should. Unresolved; possibly the honest answer is a
+   coarser, figure-level "inputs touched since last delivery" flag driven by
+   `doIt_human.m`'s own structure.
+4. **How much MATLAB-side style work each retarget needs.** §5's arithmetic says a
+   1-column figure shrinks 2.25×, and since fonts do not scale, relative text grows.
+   Whether that lands legible, or needs per-panel font/tick/label intervention, cannot be
+   known without replotting a real panel at 87 mm and looking at it. This is the single
+   biggest unknown in the per-figure cost.
+5. **Whether the compliance lint should read the PDF or the SVG.** Measuring text size
+   and stroke width from a PDF needs a parser, and this machine has no `pypdf`, `qpdf` or
+   `fitz`. Linting the SVG before conversion is probably easier and just as valid, but it
+   cannot catch anything the conversion itself introduces. Likely both, eventually;
+   start with whichever proves cheaper.
+6. **Which of the spec's three disagreeing width values to author at.** The pica values
+   match the class best (0.03 mm), the cm values are what the guidelines headline. The
+   difference is 0.19 mm and well inside PNAS's own internal spread, so this probably does
+   not matter at all — but "probably does not matter" is not the same as knowing, and only
+   a real submission settles it.
+7. **How much friction the Overleaf bridge actually causes.** One push was already
+   rejected today because of a concurrent UI edit; fetch-and-rebase handles it. Whether
+   that stays a non-event once prose editing and figure delivery are both happening often
+   is a question about working habits, not about the tooling.
+8. **The height budget.** The guidelines say at most 225 mm and explicitly less, to leave
+   room for the legend, without naming a number. We will have to pick a cap, and revise it
+   the first time a real caption does not fit.
+
+None of these block starting. They are the reason to start with one small figure.
