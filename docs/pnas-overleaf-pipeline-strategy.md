@@ -1,145 +1,165 @@
 # Strategy: porting huMoMain's figures onto a PNAS/Overleaf pipeline
 
-Written 2026-09-17. This is a **strategy, not an implementation plan with code** — the
-agreed approach is to port figures one at a time, together, so this document sketches the
-shared architecture and a starting order, and deliberately stops short of designing each
-figure's layout.
+Written 2026-09-17, **revised 2026-09-22** after a review against the engine as it actually
+exists and a panel-by-panel inventory of the five figures. This is a **strategy, not an
+implementation plan with code** — the agreed approach is to port figures one at a time,
+together, so this document fixes the shared architecture and a starting order, and stops
+short of designing each figure's layout.
+
+**What changed in the revision, in one paragraph.** The first draft proposed a stamped base
+and a three-way merge to reconcile a hand-edited `layout.json` against the SVG. That solves
+the *old* engine's problem (two mutable copies of layout state), which the new engine's
+`syncPanel.m` already avoids by keeping exactly one: the composed SVG. The revision keeps
+that single writer (§3), drops the content hash (§4), replaces the file-size-based figure
+assessment with a grounded inventory that moves figure 1 to the front and figure 5 back
+(§6), states the content-preservation narrowing as a decision rather than an omission and
+gives panel letters a mechanism (§2), and adds a readiness checklist for the first real test
+(§13).
 
 **Treat it as provisional.** The delivery end (§8) is measured and can be relied on; the
-figure-side design (§3, §4) is a considered proposal that has not yet met a real figure,
-and the first one or two ports should be expected to change it. §12 lists what is most
-likely to shift. Where this document sounds decided, read "current best guess" — it is
-written in the declarative to be useful, not because the questions are closed.
+figure-side design (§2–§4) is a considered proposal that has not yet met a real figure, and
+the first port should be expected to change it. §12 lists what is most likely to shift.
 
-Scope: main figures 1–5 of huMoMain, plus supporting information. Two companion
-documents, neither of them in this repository: `scratch/pnas/README.md` in this worktree
+Scope: main figures 1–5 of huMoMain, plus supporting information. Two companion documents,
+neither of them in this repository: `scratch/pnas/README.md` in the original worktree
 (gitignored, so it does not survive the worktree) records the PNAS specification and the
-template provenance; `figtest/README.md`, now committed in the Overleaf manuscript
-project, records what the delivery end is already proven to do and the six traps found
-while proving it.
+template provenance; `figtest/README.md`, committed in the Overleaf manuscript project,
+records what the delivery end is already proven to do and the six traps found while proving
+it.
 
 ## 1. The two properties that must hold at once
 
-1. **Regeneration.** Change the underlying data, re-run, and the figure is correct with
-   no manual work.
+1. **Regeneration.** Change the underlying data, re-run, and the figure is correct with no
+   manual work.
 2. **Manual adjustment.** Hand adjustments survive that regeneration.
 
-These two are in direct conflict unless every manual adjustment is captured somewhere
-durable and machine-readable *outside* the artifact that regeneration overwrites. That
-single sentence is the whole design; everything below follows from it.
+These two are in direct conflict unless every manual adjustment is captured somewhere durable
+and machine-readable that regeneration reads *before* it overwrites anything. That single
+sentence is the whole design; everything below follows from it.
 
-The existing engine already understands this — `manuscriptFigures/FigxN.layout.json`
-holds positions and sizes in millimetres, and the `.svg` is rebuilt from it. What it
-does not have is a way to tell *which side moved*, which is the problem §3 solves.
+The old engine (`manuscriptFigTools/`) satisfied it with a `layout.json` sidecar that was
+both the source of truth and hand-editable, alongside an SVG that was also hand-editable —
+two writers, and hence its documented ordering hazard. The new engine already made the other
+choice (§3).
 
 ## 2. Layer model
 
 | Layer | What it is | Durable? | Hand-edited? |
 |---|---|---|---|
-| **L1 Content** | Upstream analysis code draws MATLAB axes/figures from data | code + data are durable | never |
-| **L2 Layout** | Per-figure JSON: which panel, where, how big, on which PNAS canvas | **yes — version controlled** | **yes, this is the only place** |
-| **L3 Composition** | One SVG per figure, assembled from L1 at L2 positions | no — build artifact | in an editor, then harvested back to L2 |
-| **L4 Delivery** | SVG → PDF at exact publication size → lint → Overleaf | no — build artifact | never |
+| **L1 Content** | Upstream analysis code draws MATLAB axes from data | code + data are durable | never |
+| **L2 Composition** | One committed SVG per figure, on a PNAS canvas, holding every panel at its place plus a manual layer | **yes — version controlled, the single source of layout truth** | **yes, in a vector editor or numerically (§3)** |
+| **L2′ Layout record** | Per-figure `FigN.layout.json`, *derived* from L2 on every compose | yes, committed beside the SVG | **never** — read only to re-seed a lost SVG |
+| **L3 Delivery** | SVG → PDF at exact publication size → lint → Overleaf | no — build artifact | never |
 
-The invariant: **the SVG is disposable, `layout.json` is durable.** Anything done in
-Inkscape that cannot be expressed in L2 will be lost on the next regeneration — so the
-system must either harvest it or say loudly that it cannot, never silently drop it.
+The invariant, inverted from the first draft: **the composed SVG is durable and is the one
+place layout lives.** Each panel inside it is disposable — regeneration replaces that panel's
+own subtree wholesale — but the document, the positions, and the manual layer persist. The
+layout JSON is a by-product for diffing, review, and disaster recovery, never an input.
 
-That makes the set of permitted manual adjustments a deliberate, closed list. Proposed:
-panel position, panel size, panel-label position, and annotation (arrow/text) position.
-Everything else — a nudged tick label, a legend moved inside the axes, a recoloured
-trace — belongs in MATLAB, because the SVG cannot keep it. Being explicit about this
-closed list up front is what stops the pipeline from quietly eroding.
+**Permitted manual adjustments, as a deliberate closed list:** panel position and panel size
+(via the spine box, which is what `syncPanel.m` measures), and anything drawn in the
+figure-level manual layer (arrows, brackets, free text). Everything *inside* a panel — a
+nudged tick label, a legend moved inside the axes, a recoloured or deleted trace — is
+regenerated and belongs in MATLAB.
 
-## 3. Fixing the ordering hazard (the one real architectural change)
+**This is a narrowing, stated as a decision.** In August the old engine grew three
+mechanisms (keyed content patching, an `inkscape:label` survival rule, a per-panel manual
+group) because Seb explicitly wanted a recolour or a deletion made in Inkscape to survive
+regeneration. This strategy does not carry them over. The reasoning: each of them
+re-introduces a second writer for content the pipeline also writes, which is precisely the
+class of problem §3 removes, and the one legitimate need they served — "I want this trace
+gone / this colour changed in the paper" — is a one-line style option in the plotting call
+that is then also correct in every diagnostic figure. If a real port shows a manual content
+edit that genuinely cannot be expressed upstream, that is the moment to revisit, with the
+concrete case in hand.
 
-This is worth doing properly because it is the current engine's sharpest edge, and it is
-documented at length in `manuscriptFigTools/harvestManuscriptFigureLayout.m`:
+**Panel letters.** Today no code draws them; they exist only as hand-typed Inkscape text. The
+pipeline should draw them: one `<text>` per panel in a figure-level `labels` group, at a
+fixed offset from that panel's spine box, regenerated on every compose so a moved panel
+carries its letter with it. A letter hand-moved in Inkscape is lost on the next compose, by
+design — the offset is a figure-wide style setting, not a per-letter adjustment. Font, size,
+and case are set once per manuscript (PNAS: uppercase, bold, same family as the figure).
 
-> "this ALWAYS overwrites layout.json's xMM/yMM/widthMM/heightMM with values derived
-> from whatever is currently in the .svg. If you hand-edit layout.json directly (any
-> field), run this panel's makeFigX_Z_z.m next … BEFORE ever running updateFigX_Z_z.m
-> again — otherwise update just re-derives your old values back from the still-stale
-> .svg."
+## 3. One writer for layout (replaces the first draft's three-way merge)
 
-The cause: there are **two mutable copies of the same state** — `layout.json` and the
-SVG's `transform` — and each can be edited independently, with no record of what they
-agreed on last. So a pure *move* is genuinely ambiguous with a hand-edited-but-unapplied
-`layout.json`, which is exactly why a resize can be auto-harvested but a move needs an
-explicit `updateFigxN.m` call, and why the ordering hazard exists at all.
+The first draft diagnosed the old engine's hazard correctly and then proposed the standard
+remedy for two writers: stamp the base, merge three ways. But `syncPanel.m` never had two
+writers. On every call it **measures the panel's current spine box directly from the
+composed SVG**, however it got there, re-renders the panel natively at that geometry, and
+splices the fresh subtree back in. There is no sidecar, no "which side moved", no ordering
+hazard, and no `updateFigxN.m` family. Reintroducing a hand-editable JSON, and a third file
+to referee it, would be building the old engine's problem back in order to solve it.
 
-**The proposal is to record the base** — untested, but the diagnosis above is solid and
-this is the standard remedy for it. At every composition, write a sidecar
-`FigxN.built.json` stamping, per panel, the exact layout values the SVG was built from,
-plus a content fingerprint:
+So the revised proposal is to **keep one writer** and add two small things around it:
 
-```json
-{"panel-1-a": {"xMM": 12.5, "yMM": 30.0, "widthMM": 60.0, "heightMM": 45.0,
-               "contentHash": "ab12cd…", "builtAt": "2026-09-17T19:40:00Z"}}
-```
+1. **Numeric placement writes into the SVG.** A `placePanel(composedFile, panId, boxMM)`
+   that sets a panel's spine box in millimetres by editing the composed document directly
+   (the same wrapper-transform an editor would leave) — so precise placement never needs a
+   second file. First placement of a new panel goes through the same function with a
+   default box. `syncPanel.m`'s next call then measures it back like any other edit.
+2. **A derived layout record.** Every compose writes `FigN.layout.json` — per panel, the
+   measured spine box in mm plus the canvas — as a *report*, never read on the normal path.
+   Its two uses: a readable diff in code review when a figure changes, and re-seeding the
+   composed SVG if it is ever lost or corrupted (`placePanel` per entry, then re-sync). It
+   is written after the SVG, so it can never be newer than the truth.
 
-Now every field has three values — BASE (stamped), SVG (current, possibly edited in
-Inkscape), JSON (current, possibly hand-edited) — and reconciliation is an ordinary
-three-way merge:
+Consequences:
 
-| SVG vs BASE | JSON vs BASE | Action |
+- **Position and size edits, moves included, are captured with no extra step.** A pure move
+  was the old engine's ambiguous case; here it is just a different measured box.
+- **Panel set changes are not a special case.** A new panel has no box in the SVG, so it gets
+  the default placement. A panel that disappears from the MATLAB side simply stops being
+  re-synced and stays in the SVG until removed explicitly (`removePanel`); it is never
+  silently deleted, and the layout record shows it as stale. This retires §12.1 of the
+  first draft.
+- **The conflict case cannot arise**, so nothing needs to fail loudly about it. What *does*
+  need to fail loudly is rotation (already does) and a panel whose spine elements can no
+  longer be found after an editor save (already does).
+
+**The number that had to be checked before trusting this at PNAS scale — now measured.**
+`test_sync_panel.m` only asserts that a no-edit resync recovers the same box to within 0.01
+of the canvas, which at 87 mm is 0.87 mm and visible. Measured 2026-09-22 (six no-edit cycles
+per canvas, `scratch/measure_resync_drift.m`, R2025a headless):
+
+| Canvas | First resync vs. requested box, max over x/y/w/h | Cycles 2–6 |
 |---|---|---|
-| same | same | nothing to do |
-| **differs** | same | edited in Inkscape → harvest SVG → JSON |
-| same | **differs** | hand-edited JSON → apply JSON → SVG on compose |
-| **differs** | **differs** | genuine conflict → **fail loudly**, print both |
+| 87 × 60 mm | 0.29 mm | identical to cycle 2, zero drift |
+| 178 × 120 mm | 0.22 mm | identical to cycle 2, zero drift |
 
-Three consequences, if it holds up (see §12.1 for the case this table does not cover):
-
-- **A pure move becomes auto-harvestable**, because it is no longer ambiguous. The
-  `updateFigxN.m` family disappears — only two exist today (`updateFigx1xa.m`,
-  `updateFigx2xa.m`), but one per repositionable panel was the trajectory, and the
-  ordering hazard goes with them.
-- The conflict case fails loudly with both values rather than silently picking, per the
-  project's standing no-fallbacks rule.
-- `contentHash` gives §4 its staleness signal for free.
-
-Use a **sidecar file rather than attributes on the SVG group.** Custom attributes would
-be more elegant and would travel with the file, but they are hostage to whatever the
-external editor chooses to preserve on save, and the entire point of the base record is
-that it must be trustworthy. A sidecar cannot be clobbered by Inkscape.
+So the residual is a **one-time quantisation** between the box requested and the box MATLAB
+actually renders (the same `72/ScreenPixelsPerInch` rounding family the matchers already
+tolerate), after which the measured box is a fixed point. It does not accumulate. A quarter
+of a millimetre on first placement is below what a manuscript reader can see; if it ever
+matters, `placePanel` can iterate once. The test's tolerance should still be tightened to
+what was measured, so a regression shows up.
 
 ## 4. Regeneration on data change
 
 Two separable questions: how do we know content changed, and what do we rebuild.
 
-**Knowing:** fingerprint each panel over (its input data's content hash or mtime+size) +
-(the plotting code's commit or mtime) + (the serialized style opts). Store it as
-`contentHash` in `FigxN.built.json`.
+**Rebuilding — resist over-engineering.** Panel content arrives as *live MATLAB handles* from
+`doIt_human.m`, which has already run the analysis, so by the time a figure function is
+called the expensive part has happened and recomposing a whole figure is cheap. Per-panel
+incremental rebuild has nothing to save.
 
-**Rebuilding — and here it is worth resisting over-engineering.** In this codebase panel
-content arrives as *live MATLAB handles* from `doIt_human.m`, which has already run the
-analysis:
+**Knowing — drop the content hash.** The first draft proposed fingerprinting each panel's
+inputs. §12.3 of that draft already conceded there is nothing concrete to hash at the point
+where the figure function runs. The honest, sufficient mechanism is coarser:
 
-```matlab
-opts = makeFigx1human;
-makeFigx1human([Figx1xa_singleRun_radius … ], hFcrossSection, opts, insertIt);
-```
+- Delivery (§8) is an **explicit step**, never a side effect of composing. It records, per
+  figure, the hash of the composed SVG it last delivered.
+- Delivery lists what changed since it last ran — SVG hash differs, or a panel was added or
+  removed per the layout record — and delivers only on an explicit call per figure. A human
+  has therefore looked at a changed figure before it ships; that is the gate.
+- Staleness the other way round — a delivered PDF older than its SVG — is one mtime
+  comparison and a warning at the end of `doIt_human.m`.
 
-By the time the figure function is called, the content already exists in memory, so
-per-panel incremental rebuild has nothing to save — the expensive part happened upstream,
-governed by the doIt script's own section structure. Recomposing a whole figure is cheap.
-
-So the fingerprint should not drive incremental rebuild. It should drive **staleness
-detection**, which is the thing actually worth having:
-
-- warn when a delivered PDF is older than the inputs it claims to be built from;
-- refuse to deliver a figure whose content changed but whose layout has not been looked
-  at since, so a data update cannot silently ship a broken layout;
-- let `doIt_human.m` end with a single delivery step for whatever was rebuilt this
-  session.
-
-That is the honest version of "automatic regeneration": automatic recomposition and
-delivery, with an explicit gate where a human's judgement is genuinely required.
+That is the honest version of "automatic regeneration": automatic recomposition, with an
+explicit gate where a human's judgement is genuinely required.
 
 ## 5. The canvas retarget — the main porting cost
 
-The current engine composes every figure on a **US-letter page**:
+The old engine composes every figure on a **US-letter page**:
 
 ```matlab
 % initManuscriptFigureSvg.m
@@ -150,82 +170,82 @@ pageHeightMM = 279.4;
 
 PNAS does not want a page. It wants a standalone figure at one of exactly three widths —
 87 / 114.3 / 178 mm — and at most 225 mm tall, and explicitly less, to leave room for the
-legend. So porting is fundamentally **retargeting the canvas**, and the good news is that
-`runPillar1.m`'s `opts.canvasSize` already drives `fig2.Position`, `fig2.PaperSize` and
-`fig2.PaperPosition`, so this is a one-argument change rather than a redesign.
+legend. So porting is fundamentally **retargeting the canvas**, and `syncPanel.m` already
+takes the canvas as an argument (`opts.canvasUnits`/`opts.canvasSize`, used once to create
+the composed file; thereafter the file's own root size is the truth). This is a one-argument
+change rather than a redesign. Millimetres are not a MATLAB figure unit, so the preset is
+expressed in centimetres.
 
 The consequence to plan around: **font sizes do not scale with the canvas.** Panels are
-replotted natively at their target size (this is deliberate, and the reason
-`harvestManuscriptFigureLayout.m` folds an Inkscape scale into `widthMM`/`heightMM`
-instead of leaving a transform), so shrinking the canvas makes text *relatively larger*.
-Legibility improves, but existing `layout.json` numbers stop meaning anything:
+replotted natively at their target size (deliberate — a resize is a re-render, never a
+scaled vector), so shrinking the canvas makes text *relatively larger*. Legibility improves,
+but the old engine's layout numbers stop meaning anything:
 
 - full-width figures shrink 195.9 → 178 mm usable, a mild 0.91× — layouts mostly survive;
 - 1-column figures shrink 195.9 → 87 mm, a 2.25× reduction — layouts must be rebuilt.
 
-Which is precisely why the width class has to be decided per figure, first, and why
-doing this one figure at a time with a human looking at it is the right call rather than
-a batch conversion.
+Which is why the width class has to be decided per figure, first, and why doing this one
+figure at a time with a human looking at it is the right call rather than a batch
+conversion.
 
-## 6. Per-figure assessment
+## 6. Per-figure assessment — grounded
 
-What can be said before touching anything:
+Every panel in all five figures resolves to exactly one axes (three of the five figure
+functions assert it). What varies is the graphics *content*, checked against what the engine
+matches today — Line, Patch (error bands and stim bars), Image, Legend, Colorbar at
+`eastoutside`, ad hoc `text()`:
 
-| Figure | Current shape | Port notes |
-|---|---|---|
-| **1** `makeFigx1human.m` (430 ln) | N metric panels + a cross-section panel; since 2026-08-19 **each metric input already gets its own top-level `panelId`** so Inkscape repositioning is not lost on regeneration | Best-prepared of the five — it already assumes the L2/L3 split. Likely 2-column. Its cross-section panel is copied as-is and aspect-preserving, i.e. it is already the passthrough of §7. |
-| **2** `makeFigx2xabcdefgh.m` (216 ln) | 8 panels: brain, crops, overlays, patches | Image-heavy, so this is the one where the raster ppi rules bite. Port **last**, once the lint works. Likely 2-column. |
-| **3** `makeFigx3.m` (307 ln) | returns `Fig3panels` | Needs a read before it can be characterised. |
-| **4** `makeFigx4human.m` (312 ln) | one call per metric; cell arrays `{a, radius, flow}` plus a response-timeseries panel; `[]` means "not ready yet" | Variable panel count — the layout has to tolerate a growing figure. |
-| **5** `makeFigx5.m` (239 ln) | fixed 1×3 full-width row of equal squares, `(215.9−20−10)/3 ≈ 61.97 mm` | Cleanest retarget: the same formula at 178 mm gives `(178−2m−2g)/3`. Smallest and most self-contained. |
-| **SI** | **no code exists** — no `figS*`, no supplement machinery anywhere | Not a port at all: greenfield. Combined with "the supplementary figures are very dirty", the right answer is the passthrough of §7, not the full pipeline. |
+| Figure | Panels | Content | Blocker for the engine as it stands |
+|---|---|---|---|
+| **1** `makeFigx1human.m` | 4 metric panels (Line, CI Patch, stim Patch, id text, Legend) + 1 cross-section (Image, contour Lines) | all supported | **none** |
+| **4** `makeFigx4human.m` | group-metric panels and response-timeseries tiles (Line, CI Patch, Legend, id text) | all supported | **none** — but its `doIt_human.m` call is currently broken: two of the inputs it passes are commented out just above it |
+| **5** `makeFigx5.m` | 2 Faa-space panels (~256 Lines each, one `eastoutside` Colorbar) + 1 histogram panel | panels 1–2 supported | **Histogram** (two `histogram` objects, panel 3). Driven from `doIt_faa.m`, not `doIt_human.m` |
+| **3** `makeFigx3.m` | 3 image panels (Image, scale-bar Line + text, `eastoutside` Colorbar) + 3 scatter panels | a/c/e supported | **Scatter** (panels b, d, f) |
+| **2** `makeFigx2xabcdefgh.m` | 8 brain/crop/overlay panels | Image supported | **Polygon** mask outlines (`plot(ax, polyshape)`), **two stacked Images** per axes (grey underlay + alpha-masked RGB overlay), and **thin colorbars on a hidden helper axes** that the old engine's copy step silently deletes |
+| **SI** | no code at all — plain `printFigs` of whole tiled diagnostic figures, plus `quiver` arrows | — | not a port: greenfield, passthrough (§7) |
 
-The SI is a different document with different geometry, and it is worth knowing before
-planning anything for it: the SI project ships `pnas-new.cls` **v1.45**, not the
-manuscript project's v1.47, and its template is **single-column** (`[9pt,twoside,lineno]`
-with no `twocolumn`). Measured, its text measure is 505.694 pt = **177.74 mm** — the
-2-column figure width to within 0.06 mm — on a full US Letter page rather than the
-manuscript's shrunk layout. So SI figures are naturally authored at 178 mm and there is
-no column structure to reason about at all. An 87 mm figure in the SI would sit at half
-measure, which is permitted but probably not what anyone wants.
+The SI is a different document with different geometry: its project ships `pnas-new.cls`
+**v1.45**, not the manuscript's v1.47, and its template is **single-column**. Measured, its
+text measure is 505.694 pt = **177.74 mm** — the 2-column figure width to within 0.06 mm —
+on a full US Letter page. So SI figures are naturally authored at 178 mm and there is no
+column structure to reason about.
 
-That PNAS ships two different class versions across its own two templates is their
-inconsistency, not something to fix; it just means the SI's numbers must be measured
-separately, as above, rather than assumed from the manuscript's.
+**Order: 1 → 4 → 5 → 3 → 2, then SI.** Figure 1 leads because it is the only figure that is
+both fully within the engine's current content support *and* already structured one axes
+per panel with a passthrough-shaped image panel, so it exercises the whole path — composition,
+re-sync, letters, PDF, lint, delivery — without a single new matcher. Figure 4 second for
+the same reason, once its call site is repaired. Figure 5 third: small, but it needs either
+a Histogram matcher or a passthrough for its third panel. Figure 3 adds Scatter. Figure 2
+last: it is the one that needs the raster ppi lint to be real, and it carries three content
+blockers of its own.
 
-**Suggested order: 5 → 1 → 3 → 4 → 2, then SI.** Figure 5 as the pathfinder — small
-enough that the shared layer gets shaped by a real case rather than by speculation, and
-its sizing math retargets almost by inspection. Figure 1 second because it already has
-the per-panel structure and would exercise both composition and passthrough. Figure 2
-last because it is the one that needs the ppi lint to be real.
+The first draft put figure 5 first from file sizes alone; the inventory reversed that. If
+figure 1's port shows something that makes another figure the better teacher, reorder
+without ceremony — the point of going one at a time is to be able to.
 
-This order is a guess from file sizes, headers and one reading of each figure's inputs —
-not from having built any of them. If figure 5 turns out to be unrepresentative, or if
-figure 1's existing per-panel structure means it would actually teach us more, reorder
-without ceremony. The point of going one at a time is precisely to be able to.
-
-## 7. Escape hatch: passthrough figures
+## 7. Escape hatch: passthrough figures and panels
 
 Not every figure should be composed. A **passthrough** figure's content is a committed,
-hand-made SVG or PDF — a schematic, a montage, a legacy figure nobody wants to
-reconstruct. It gets the whole delivery path (canvas size check, compliance lint, stable
-filename, push) and none of the composition or layout harvesting.
+hand-made SVG or PDF — a schematic, a montage, a legacy figure nobody wants to reconstruct.
+It gets the whole delivery path (canvas size check, compliance lint, stable filename, push)
+and none of the composition or layout harvesting.
 
-This matters for three reasons: the dirty SI figures start here and cost almost nothing;
-any of them can graduate to the full pipeline later without anything downstream changing;
-and the engine already has the precedent, since figure 1's cross-section panel is copied
-as-is today.
+The same hatch applies at **panel** granularity: a panel whose content the engine cannot yet
+match (a histogram, a scatter) can be exported as a plain baked SVG group and placed with
+`placePanel`, giving up only re-sync for that panel. That is how figure 5 can be ported
+before a Histogram matcher exists, and how any panel can graduate to full support later
+without anything downstream changing.
 
 ## 8. The Overleaf contract
 
-Proven today by `figtest` (pushed to the manuscript project as `d67ca14`):
+Proven by `figtest` (committed in the manuscript project):
 
-- **The pipeline writes only figure PDFs, at stable filenames, and never touches a
-  `.tex` file.** `figures/fig1.pdf` … `fig5.pdf`, `figures/figS1.pdf` … . The
-  `\includegraphics` lines are written once, by hand, in Overleaf. This is what keeps the
-  conflict surface at zero while a human edits prose in the browser.
-- Deliver **PDF only**. TIFF and SVG cannot be included at all; EPS rounds its bounding
-  box up to whole points; JPEG is discouraged by PNAS. PDF keeps text as text and embeds
+- **The pipeline writes only figure PDFs, at stable filenames, and never touches a `.tex`
+  file.** `figures/fig1.pdf` … `fig5.pdf`, `figures/figS1.pdf` … . The `\includegraphics`
+  lines are written once, by hand, in Overleaf. This is what keeps the conflict surface at
+  zero while a human edits prose in the browser.
+- Deliver **PDF only**. TIFF and SVG cannot be included at all; EPS rounds its bounding box
+  up to whole points; JPEG is discouraged by PNAS. PDF keeps text as text and embeds
   ArialMT, which is on PNAS's accepted-font list.
 - `\includegraphics` takes **no width or scale option** — the file is already at final
   size. A scaling option would mask exactly the defects the lint should catch.
@@ -233,113 +253,139 @@ Proven today by `figtest` (pushed to the manuscript project as `d67ca14`):
   `figure` at 87 mm, `figure*` at 178 mm, and `SCfigure*` — a full-width float with the
   caption beside the figure — at either 114.3 mm (the good balance) or 87 mm (for a long
   legend). `SCfigure*` needs no extra package; the class already loads
-  `sidecap[rightcaption]`. Crucially for us, sidecap keeps the *graphic's* natural width
-  and shrinks the *caption* to whatever is left of the 512 pt block, so a side-caption
-  figure is still authored at one of the three permitted widths and **the pipeline needs
-  no special case for it** — only the manuscript's `\begin{...}` line changes. This is
-  also the most plausible reason the 1.5-column width exists: it is the one that leaves a
-  usable caption strip (62.1 mm, against 89.7 mm behind an 87 mm graphic).
-- **Figures go after the first-page text block.** Placing a float while `\Firstpage` is
-  in effect overflows the page by 199.69 pt; this is a defect in `pnas-new.cls` v1.47
-  that the pristine PNAS template triggers too. Call `\Endparasplit` first, as the
-  template does.
-- **Fetch and rebase before every push.** Already hit today: the remote had moved because
-  of a UI edit, and the push was rejected. The bridge allows no branching, so delivery
-  must always be a fast-forward onto current `main`.
+  `sidecap[rightcaption]`. sidecap keeps the *graphic's* natural width and shrinks the
+  *caption* to whatever is left of the 512 pt block, so a side-caption figure is still
+  authored at one of the three permitted widths and **the pipeline needs no special case for
+  it** — only the manuscript's `\begin{...}` line changes. This is also the most plausible
+  reason the 1.5-column width exists: it is the one that leaves a usable caption strip
+  (62.1 mm, against 89.7 mm behind an 87 mm graphic).
+- **Figures go after the first-page text block.** Placing a float while `\Firstpage` is in
+  effect overflows the page by 199.69 pt; this is a defect in `pnas-new.cls` v1.47 that the
+  pristine PNAS template triggers too. Call `\Endparasplit` first, as the template does.
+- **Fetch and rebase before every push.** Already hit once: the remote had moved because of
+  a UI edit, and the push was rejected. The bridge allows no branching, so delivery must
+  always be a fast-forward onto current `main`.
+- The bridge token lives only in `~/.netrc` and must never reach a command line, a remote
+  URL, or a commit — this repository is public.
 
 ## 9. What gets built once, in matlab2manuscript
 
-1. **PNAS canvas preset** — the three widths, the height cap, 1:1 mm authoring.
-2. **Compose + base stamping + three-way reconcile** (§3), replacing the ordering hazard
-   and the `updateFigxN.m` family.
-3. **SVG → PDF export** via librsvg, with assertions on page box, embedded fonts and
-   text-preservation. Proven today; note that Inkscape's
-   `--export-text-to-path=false` silently *enables* text-to-path, so it is not the tool
-   to use here.
-4. **Compliance lint**, failing loudly: text ≥ 6 pt, strokes ≥ 0.25 pt, RGB only, font
-   family on the accepted list, raster ppi ≥ 300/600/1000 by artwork class, height under
-   the cap, page box equal to one of the three permitted widths.
-5. **Passthrough path** (§7).
-6. **Delivery** — copy into the Overleaf clone, fetch, rebase, commit, push.
+Status against the engine as of 2026-09-22:
 
-Every new user-facing MATLAB function follows the project's no-arg-call convention: a
-bare call prints help and returns fully-populated default opts, with every documented
-field present even as an empty placeholder.
+| # | Piece | Status |
+|---|---|---|
+| 1 | **PNAS canvas preset** — the three widths in cm, a height cap, 1:1 authoring | trivial: `syncPanel.m` already takes `canvasUnits`/`canvasSize`; needs a named preset and the height guard |
+| 2 | **Compose + re-sync** | **built** (`syncPanel.m`, `runPillar1.m`), simulated edits only |
+| 3 | **`placePanel` / `removePanel`** + derived `FigN.layout.json` (§3) | not built, small |
+| 4 | **Panel letters** (§2) | not built, small |
+| 5 | **SVG → PDF export** via librsvg, asserting page box, embedded font, text kept as text | proven by hand in `figtest/build.sh`; needs a MATLAB wrapper. Not Inkscape: its `--export-text-to-path=false` silently *enables* text-to-path |
+| 6 | **Compliance lint**, failing loudly: text ≥ 6 pt, strokes ≥ 0.25 pt, RGB only, font family on the accepted list, raster ppi ≥ 300/600/1000 by artwork class, height under the cap, page box equal to one permitted width | not built. **Lint the SVG**, not the PDF: `groupAndTagSvg.m` already writes MATLAB's live font size back as the authoritative value, and this machine has no PDF parser |
+| 7 | **Passthrough path** (§7) | not built, small |
+| 8 | **Delivery** — copy into the Overleaf clone, fetch, rebase, commit, push, record the delivered hash (§4) | not built; the manual sequence is proven |
+| 9 | **Real-editor round trip** — save the composed file from Inkscape, re-sync | not done; the standing next item since 2026-08-30 |
+
+Every new user-facing MATLAB function follows the project's no-arg-call convention: a bare
+call prints help and returns fully-populated default opts, with every documented field
+present even as an empty placeholder.
 
 ## 10. Decisions to make, per figure and up front
 
 Up front:
 
-- **Font: standardise on Arial everywhere.** Genuine Arial is now installed, it is on
-  PNAS's accepted list, and it embeds as `ArialMT`. Naming `Helvetica` in MATLAB is a
-  lottery between Nimbus Sans, TeX Gyre Heros and Liberation Sans depending on which
-  converter runs, none of which is on the list.
-- **Where the Overleaf clone lives** — inside huMoMain at a fixed path, or outside it.
-  Inside is more convenient; outside keeps a credential-bearing remote out of the project
-  repo.
-- **Whether delivered PDFs keep text as text.** Recommended yes: outlining text would
-  make the lint's 6 pt check impossible and would defeat the editable round-trip.
+- **Font: standardise on Arial everywhere.** Genuine Arial is installed, it is on PNAS's
+  accepted list, and it embeds as `ArialMT`. Naming `Helvetica` in MATLAB is a lottery
+  between Nimbus Sans, TeX Gyre Heros and Liberation Sans depending on which converter runs,
+  none of which is on the list.
+- **Where the Overleaf clone lives** — inside huMoMain at a fixed path, or outside it. Inside
+  is more convenient; outside keeps a credential-bearing remote out of the project repo.
+  Recommendation: outside, e.g. a sibling of the project, path given in the doIt.
+- **Delivered PDFs keep text as text.** Yes: outlining text would make the 6 pt check
+  impossible and would defeat the editable round-trip.
+- **The composed SVGs are committed** in huMoMain (§2), under a fixed directory. The old
+  engine's output directory was never tracked, which is why no `manuscriptFigures/` exists
+  in either clone today.
 
-Per figure, when we get to it: its PNAS width class, its panel inventory, and which of
-its panels are composed versus passthrough.
+Per figure, when we get to it: its PNAS width class, its panel inventory, and which of its
+panels are composed versus passthrough. **For figure 1 the proposal is 178 mm** (2-column,
+`figure*`): the four metric panels stack in a column on the left, the cross-section sits on
+the right, each metric panel roughly 105 × 21 mm and the cross-section roughly 65 mm wide.
+To be looked at, not assumed.
 
 ## 11. Migration stance
 
-Do **not** extend `manuscriptFigTools/`. It is the engine `matlab2manuscript` was
-restarted from scratch to replace, and it is superseded rather than a base to build on.
+Do **not** extend `manuscriptFigTools/`. It is the engine `matlab2manuscript` was restarted
+from scratch to replace, and it is superseded rather than a base to build on. The one thing
+worth carrying across is knowledge, not code: its history of what Seb wanted (§2's
+narrowing is written against it), its render-to-raster verification discipline, and its
+list of MATLAB gotchas (`copyobj` cannot copy a `yyaxis` axes; a `TiledChartLayout` tile
+must be reparented before it can be positioned; the machine's dark `GraphicsTheme` default
+makes axis furniture invisible on a white page unless forced black).
 
-The two can coexist safely during the port because `manuscriptFigures/` is absent from
-this clone, so the old engine currently produces nothing here and there is nothing to
-break. Per figure: pick the width class, build the replacement on `runPillar1`, re-tune
-the layout, lint, deliver, accept — and only then delete that figure's `makeFigxN.m` and
-`updateFigxN.m`.
+The two can coexist safely during the port because `manuscriptFigures/` is absent from both
+clones, so the old engine currently produces nothing and there is nothing to break. Per
+figure: pick the width class, build the replacement on `syncPanel`, re-tune the layout,
+lint, deliver, accept — and only then delete that figure's `makeFigxN.m` and `updateFigxN.m`.
 
 ## 12. What we will only find out by doing it
 
-Listed so the first port does not have to rediscover that these were open, and so nobody
-reads §3 and §4 as settled. Roughly in order of how likely each is to change the design.
+Roughly in order of how likely each is to change the design.
 
-1. **Whether the three-way merge of §3 is sufficient, and what it does when the panel
-   set changes.** A panel that did not exist at the last composition has no BASE to
-   compare against, so the table in §3 has no row for it. Figure 4 makes this concrete
-   rather than hypothetical, since its metric list grows (`[]` means "not ready yet").
-   Some rule is needed — probably "no BASE → take `layout.json` if it has an entry, else
-   place by default" — but that is a guess, and the same question arises for a panel that
-   *disappears*.
-2. **What a real Inkscape save actually does to the file.** Pillar 2's `syncPanel.m`
-   already round-trips a resize, so the basic machinery works, but reconciling against a
-   stamped base is new, and external-editor validation was already the standing next item
-   before any of this. If Inkscape rewrites structure more aggressively than expected,
-   §3's sidecar is still safe but the harvest may need to be more forgiving about what it
-   matches on.
-3. **The content fingerprint of §4 may not be implementable as described.** Panel content
-   arrives as live MATLAB handles, not files, so "hash the input data" may have nothing
-   concrete to hash at the point where the figure function runs. The fallback is to
-   fingerprint the *rendered* panel, which changes on cosmetic replots too and therefore
-   cries stale more often than it should. Unresolved; possibly the honest answer is a
-   coarser, figure-level "inputs touched since last delivery" flag driven by
-   `doIt_human.m`'s own structure.
-4. **How much MATLAB-side style work each retarget needs.** §5's arithmetic says a
-   1-column figure shrinks 2.25×, and since fonts do not scale, relative text grows.
-   Whether that lands legible, or needs per-panel font/tick/label intervention, cannot be
-   known without replotting a real panel at 87 mm and looking at it. This is the single
-   biggest unknown in the per-figure cost.
-5. **Whether the compliance lint should read the PDF or the SVG.** Measuring text size
-   and stroke width from a PDF needs a parser, and this machine has no `pypdf`, `qpdf` or
-   `fitz`. Linting the SVG before conversion is probably easier and just as valid, but it
-   cannot catch anything the conversion itself introduces. Likely both, eventually;
-   start with whichever proves cheaper.
-6. **Which of the spec's three disagreeing width values to author at.** The pica values
+1. **What a real Inkscape save actually does to the file.** `syncPanel.m` round-trips a
+   simulated resize; an editor's real save (transform syntax, baking behaviour, precision,
+   whether it preserves the `{panId}-axis-spine-*` ids the measurement depends on) has not
+   been exercised. If Inkscape rewrites structure more aggressively than expected the design
+   survives — the SVG is still the one writer — but the measurement may need to be more
+   forgiving about what it matches on.
+2. **How much MATLAB-side style work each retarget needs.** §5's arithmetic says a 1-column
+   figure shrinks 2.25×, and since fonts do not scale, relative text grows. Whether that
+   lands legible, or needs per-panel font/tick/label intervention, cannot be known without
+   replotting a real panel at the target size and looking at it. This is the single biggest
+   unknown in the per-figure cost, and figure 1 at 178 mm is the gentle case.
+3. **Whether panel letters at a fixed offset are enough**, or whether a real figure needs
+   per-letter placement. If it does, the offset becomes a per-panel attribute in the SVG
+   (measured like the box), not a JSON field.
+4. **Whether the compliance lint on the SVG misses anything the conversion introduces.**
+   Probably a PDF-side check of page box and embedded font is enough, and both are already
+   measured by hand in `figtest`.
+5. **Which of the spec's three disagreeing width values to author at.** The pica values
    match the class best (0.03 mm), the cm values are what the guidelines headline. The
    difference is 0.19 mm and well inside PNAS's own internal spread, so this probably does
-   not matter at all — but "probably does not matter" is not the same as knowing, and only
-   a real submission settles it.
-7. **How much friction the Overleaf bridge actually causes.** One push was already
-   rejected today because of a concurrent UI edit; fetch-and-rebase handles it. Whether
-   that stays a non-event once prose editing and figure delivery are both happening often
-   is a question about working habits, not about the tooling.
-8. **The height budget.** The guidelines say at most 225 mm and explicitly less, to leave
-   room for the legend, without naming a number. We will have to pick a cap, and revise it
-   the first time a real caption does not fit.
+   not matter — only a real submission settles it.
+6. **How much friction the Overleaf bridge actually causes** once prose editing and figure
+   delivery are both happening often. A question about working habits, not tooling.
+7. **The height budget.** The guidelines say at most 225 mm and explicitly less, without
+   naming a number. Pick a cap, revise it the first time a real caption does not fit.
 
-None of these block starting. They are the reason to start with one small figure.
+None of these block starting. They are the reason to start with one figure.
+
+## 13. Readiness for the first test: figure 1
+
+"Ready to test" means: run `doIt_human.m`'s figure-1 section, get a committed `fig1.svg` on a
+178 mm canvas with five placed panels and letters, open it in Inkscape and move a panel,
+re-run, see the move kept, render to PDF, and see it sit in the manuscript at the right size
+with no scaling option. Against §9, that needs:
+
+**Already in place**
+- Compose and re-sync on an arbitrary canvas (`syncPanel.m`; centimetres accepted).
+- Every figure-1 panel's content is within current matcher support (§6).
+- PDF rendering and the Overleaf placement, by hand (`figtest/build.sh`).
+
+**Must exist before the test** (all small; none is research)
+- A canvas preset and height guard (§9.1).
+- `placePanel` for first placement and numeric nudges, and the derived layout record (§9.3).
+- Panel letters (§9.4).
+- A MATLAB wrapper for the librsvg export with its page-box and font assertions (§9.5).
+- A figure-1 wrapper in huMoMain that calls `syncPanel` once per input axes and once for the
+  cross-section, replacing `makeFigx1human.m`'s call site in `doIt_human.m` — Seb's live
+  script, so edited via a checkpointed worktree, never in place.
+
+**Measured, no longer a question**
+- No-edit resync drift on PNAS-sized canvases: a one-time ≤ 0.29 mm quantisation, then a
+  fixed point (§3). Nothing to build for it.
+
+**Can wait until after the first look**
+- The compliance lint (§9.6) — the first PDF can be checked by hand.
+- Automated delivery (§9.8) — copy, commit and push by hand the first time.
+- The real Inkscape round trip is *part of* the test, not a prerequisite for it.
+
+Delivery of figure 1 into the manuscript closes the test. After that, figure 4.
